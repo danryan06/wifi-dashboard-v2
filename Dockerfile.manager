@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+# Install system dependencies for network management
+RUN apt-get update && apt-get install -y \
+    iproute2 \
+    iw \
+    wireless-tools \
+    wpasupplicant \
+    net-tools \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+RUN pip install --no-cache-dir \
+    flask \
+    docker \
+    psutil \
+    pyroute2
+
+# Create app directory
+WORKDIR /app
+
+# Copy application files
+COPY manager/ ./manager/
+COPY templates/ ./templates/
+COPY configs/ ./configs/
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/stats /app/state
+
+# Expose dashboard port
+EXPOSE 5000
+
+# Run the manager application
+CMD ["python", "-m", "manager.app"]

@@ -1,0 +1,37 @@
+FROM alpine:3.18
+
+# Install network tools and dependencies
+RUN apk add --no-cache \
+    bash \
+    curl \
+    wget \
+    iproute2 \
+    iw \
+    wireless-tools \
+    wpasupplicant \
+    dhcpcd \
+    netcat-openbsd \
+    python3 \
+    py3-pip \
+    nmap \
+    tcpdump \
+    && pip3 install --no-cache-dir \
+    speedtest-cli \
+    yt-dlp
+
+# Create app directory
+WORKDIR /app
+
+# Copy persona scripts
+COPY persona/ ./persona/
+COPY scripts/traffic/ ./scripts/traffic/
+
+# Make scripts executable
+RUN chmod +x /app/persona/*.sh /app/scripts/traffic/*.sh
+
+# Set environment variables
+ENV INTERFACE=wlan_sim
+ENV PERSONA_TYPE=good
+
+# Entrypoint script
+ENTRYPOINT ["/app/persona/entrypoint.sh"]

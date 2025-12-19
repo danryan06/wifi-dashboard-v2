@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.manager
+    container_name: wifi-manager
+    privileged: true
+    network_mode: host
+    pid: host  # Critical for seeing other container PIDs to move interfaces
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /lib/modules:/lib/modules:ro  # Allows the container to use Wi-Fi drivers
+      - ./configs:/app/configs:ro
+      - ./logs:/app/logs
+      - ./stats:/app/stats
+      - ./state:/app/state
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+
+  # Persona containers are NOT defined here - they are spawned dynamically
+  # by the Manager using the Docker API based on user configuration
