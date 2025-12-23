@@ -39,5 +39,20 @@ RUN ls -la /app/manager/ && \
 # Expose dashboard port
 EXPOSE 5000
 
+# Create a startup script that checks Docker access
+RUN echo '#!/bin/bash\n\
+echo "Starting Wi-Fi Dashboard Manager v2.0"\n\
+echo "Checking Docker socket access..."\n\
+if [ -S /var/run/docker.sock ]; then\n\
+    echo "Docker socket found"\n\
+    ls -la /var/run/docker.sock\n\
+    echo "Current user: $(id)"\n\
+else\n\
+    echo "WARNING: Docker socket not found"\n\
+fi\n\
+echo "Starting Flask application..."\n\
+exec python -m manager.app\n\
+' > /app/start.sh && chmod +x /app/start.sh
+
 # Run the manager application
-CMD ["python", "-m", "manager.app"]
+CMD ["/app/start.sh"]
