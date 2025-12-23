@@ -18,9 +18,17 @@ class InterfaceManager:
     
     def __init__(self):
         try:
+            # Try to connect to Docker socket
             self.client = docker.from_env()
-        except Exception as e:
+            # Test the connection
+            self.client.ping()
+            logger.info("Docker client initialized successfully")
+        except docker.errors.DockerException as e:
             logger.error(f"Failed to initialize Docker client: {e}")
+            logger.error("Make sure Docker socket is accessible: /var/run/docker.sock")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error initializing Docker client: {e}")
             raise
 
     def get_phy_name(self, interface: str) -> Optional[str]:

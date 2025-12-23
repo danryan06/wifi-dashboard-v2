@@ -33,6 +33,9 @@ RUN ls -la /app/manager/ && \
     ls -la /app/templates/ && \
     ls -la /app/manager/static/ 2>/dev/null || echo "Static directory may not exist yet"
 
+# Ensure we can access docker socket (will be mounted at runtime)
+# The container runs as root, so permissions should be fine
+
 # Expose dashboard port
 EXPOSE 5000
 
