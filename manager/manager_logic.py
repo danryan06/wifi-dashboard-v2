@@ -380,6 +380,9 @@ class PersonaManager:
 
     def get_persona_logs(self, container_id: str, tail: int = 100) -> List[str]:
         """Get logs from a persona container."""
+        if not self._ensure_client():
+            return []
+        
         try:
             container = self.client.containers.get(container_id)
             logs = container.logs(tail=tail, timestamps=True).decode('utf-8')
@@ -392,6 +395,9 @@ class PersonaManager:
 
     def get_persona_stats(self, container_id: str) -> Dict:
         """Get statistics for a persona container."""
+        if not self._ensure_client():
+            return {}
+        
         try:
             container = self.client.containers.get(container_id)
             stats = container.stats(stream=False)
@@ -451,6 +457,10 @@ class PersonaManager:
         for container_id, persona_info in self.state.get('personas', {}).items():
             if persona_info.get('status') == 'running':
                 # Check if container still exists
+                if not self._ensure_client():
+                    logger.warning("Docker unavailable, skipping persona restoration")
+                    continue
+                
                 try:
                     container = self.client.containers.get(container_id)
                     if container.status == 'running':

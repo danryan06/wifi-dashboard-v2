@@ -235,8 +235,20 @@ def api_start_persona():
         # Use config SSID/password if not provided
         if not ssid or not password:
             ssid, password = read_config()
+        
+        # For wired personas, no Wi-Fi config needed
+        if persona_type == 'wired':
+            ssid = None
+            password = None
+        # For bad personas, only SSID is needed (they use wrong password)
+        elif persona_type == 'bad':
+            if not ssid:
+                return jsonify({"success": False, "error": "SSID required for bad persona"}), 400
+            password = None  # Bad personas don't use the correct password
+        # For good personas, both are required
+        elif persona_type == 'good':
             if not ssid or not password:
-                return jsonify({"success": False, "error": "SSID and password required"}), 400
+                return jsonify({"success": False, "error": "SSID and password required for good persona"}), 400
         
         success, message, container_id = persona_manager.start_persona(
             persona_type=persona_type,
@@ -288,6 +300,27 @@ def api_persona_logs(container_id):
         return jsonify({"success": True, "logs": logs})
     except Exception as e:
         logger.exception(f"Error getting logs: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/logs/manager")
+def api_manager_logs():
+    """Get logs from the manager container"""
+    try:
+        tail = int(request.args.get("tail", 500))
+        log_file = os.path.join(LOG_DIR, "manager.log")
+        
+        if not os.path.exists(log_file):
+            return jsonify({"success": True, "logs": ["Log file not found"]})
+        
+        # Read last N lines from log file
+        with open(log_file, 'r') as f:
+            lines = f.readlines()
+            logs = [line.rstrip() for line in lines[-tail:]]
+        
+        return jsonify({"success": True, "logs": logs})
+    except Exception as e:
+        logger.exception(f"Error getting manager logs: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 

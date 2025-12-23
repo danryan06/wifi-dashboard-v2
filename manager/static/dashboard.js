@@ -134,6 +134,9 @@ function updateInterfaceDropdown(personas) {
     const select = document.getElementById('persona-interface');
     if (!select) return;
     
+    // Preserve current selection
+    const currentValue = select.value;
+    
     // Get assigned interfaces
     const assignedInterfaces = new Set(
         personas.filter(p => p.status === 'running' && p.interface)
@@ -154,6 +157,10 @@ function updateInterfaceDropdown(personas) {
                     option.disabled = isAssigned;
                     select.appendChild(option);
                 });
+                // Restore selection if it still exists
+                if (currentValue && !assignedInterfaces.has(currentValue)) {
+                    select.value = currentValue;
+                }
             }
         })
         .catch(err => console.error('Error loading interfaces:', err));
@@ -172,13 +179,26 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
         return;
     }
     
-    // Get SSID/password from config
+    // Get SSID/password from server config (not form - form may not be saved)
+    // The backend will use saved config if not provided, but we check here for better UX
     const ssid = document.getElementById('ssid')?.value;
     const password = document.getElementById('password')?.value;
     
-    if ((personaType === 'good' || personaType === 'bad') && (!ssid || !password)) {
-        showMessage('Please configure Wi-Fi settings first', 'error');
-        return;
+    // For wired personas, no Wi-Fi config needed
+    if (personaType === 'wired') {
+        // Wired personas don't need Wi-Fi config - proceed
+    } else if (personaType === 'bad') {
+        // Bad personas need SSID but not password (they use wrong password)
+        if (!ssid) {
+            showMessage('Please configure Wi-Fi SSID first', 'error');
+            return;
+        }
+    } else if (personaType === 'good') {
+        // Good personas need both SSID and password
+        if (!ssid || !password) {
+            showMessage('Please configure Wi-Fi settings first (SSID and password)', 'error');
+            return;
+        }
     }
     
     try {
@@ -239,7 +259,11 @@ async function updateHardwareView() {
         const personasData = await personasRes.json();
         
         if (interfacesData.success && personasData.success) {
-            displayHardwareView(interfacesData.interfaces, personasData.personas);
+            // Fix: personasData.personas is the array
+            displayHardwareView(interfacesData.interfaces, personasData.personas || []);
+        } else {
+            const container = document.getElementById('hardware-view');
+            container.innerHTML = '<div style="text-align: center; padding: 40px; color: var(--error);">Error loading hardware information</div>';
         }
     } catch (error) {
         console.error('Error updating hardware view:', error);
@@ -250,8 +274,10 @@ function displayHardwareView(interfaces, personas) {
     const container = document.getElementById('hardware-view');
     
     // Create map of interface to persona
+    // Fix: personas is already the array, not an object with .personas
+    const personaArray = Array.isArray(personas) ? personas : (personas.personas || []);
     const interfaceMap = {};
-    personas.personas.forEach(p => {
+    personaArray.forEach(p => {
         if (p.interface && p.status === 'running') {
             interfaceMap[p.interface] = p;
         }
@@ -304,10 +330,28 @@ async function loadCurrentLog() {
 async function loadManagerLog() {
     try {
         showLogLoading();
-        // Manager logs would come from manager container
-        // For now, show a placeholder
-        const logContent = document.getElementById('log-content');
-        logContent.textContent = 'Manager logs - check docker logs wifi-manager for full output';
+        // Fetch manager logs from the container
+        // We'll read from the log file or use docker logs API
+        const response = await fetch('/api/logs/manager?tail=500');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+                displayLogContent(data.logs || []);
+            } else {
+                showLogError('Failed to load manager logs: ' + (data.error || 'Unknown error'));
+            }
+        } else {
+            // Fallback: show message about checking docker logs
+            const logContent = document.getElementById('log-content');
+            logContent.innerHTML = `
+                <div style="padding: 20px;">
+                    <p>Manager logs are being loaded from the container.</p>
+                    <p style="margin-top: 10px; color: var(--muted); font-size: 0.9em;">
+                        For full logs, run: <code>docker logs wifi-manager -f</code>
+                    </p>
+                </div>
+            `;
+        }
     } catch (error) {
         showLogError('Error loading manager log: ' + error.message);
     }
