@@ -249,24 +249,35 @@ async function stopPersona(containerId) {
 
 // Hardware view
 async function updateHardwareView() {
+    const container = document.getElementById('hardware-view');
+    if (!container) return;
+    
+    // Show loading state
+    container.innerHTML = '<div style="text-align: center; padding: 40px;"><span class="spinner"></span> Loading hardware information...</div>';
+    
     try {
         const [interfacesRes, personasRes] = await Promise.all([
             fetch('/api/interfaces'),
             fetch('/api/personas')
         ]);
         
+        if (!interfacesRes.ok || !personasRes.ok) {
+            throw new Error(`API error: interfaces=${interfacesRes.status}, personas=${personasRes.status}`);
+        }
+        
         const interfacesData = await interfacesRes.json();
         const personasData = await personasRes.json();
         
         if (interfacesData.success && personasData.success) {
             // Fix: personasData.personas is the array
-            displayHardwareView(interfacesData.interfaces, personasData.personas || []);
+            displayHardwareView(interfacesData.interfaces || {}, personasData.personas || []);
         } else {
-            const container = document.getElementById('hardware-view');
-            container.innerHTML = '<div style="text-align: center; padding: 40px; color: var(--error);">Error loading hardware information</div>';
+            const errorMsg = interfacesData.error || personasData.error || 'Unknown error';
+            container.innerHTML = `<div style="text-align: center; padding: 40px; color: var(--error);">Error loading hardware: ${errorMsg}</div>`;
         }
     } catch (error) {
         console.error('Error updating hardware view:', error);
+        container.innerHTML = `<div style="text-align: center; padding: 40px; color: var(--error);">Error loading hardware: ${error.message}</div>`;
     }
 }
 
@@ -330,29 +341,34 @@ async function loadCurrentLog() {
 async function loadManagerLog() {
     try {
         showLogLoading();
-        // Fetch manager logs from the container
-        // We'll read from the log file or use docker logs API
         const response = await fetch('/api/logs/manager?tail=500');
-        if (response.ok) {
-            const data = await response.json();
-            if (data.success) {
-                displayLogContent(data.logs || []);
-            } else {
-                showLogError('Failed to load manager logs: ' + (data.error || 'Unknown error'));
-            }
-        } else {
-            // Fallback: show message about checking docker logs
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success && data.logs && data.logs.length > 0) {
+            displayLogContent(data.logs);
+        } else if (data.success && (!data.logs || data.logs.length === 0)) {
             const logContent = document.getElementById('log-content');
             logContent.innerHTML = `
-                <div style="padding: 20px;">
-                    <p>Manager logs are being loaded from the container.</p>
-                    <p style="margin-top: 10px; color: var(--muted); font-size: 0.9em;">
+                <div style="padding: 20px; text-align: center; color: var(--muted);">
+                    <p>No log entries found yet.</p>
+                    <p style="margin-top: 10px; font-size: 0.9em;">
+                        Logs will appear here as the manager runs.
+                    </p>
+                    <p style="margin-top: 10px; font-size: 0.85em;">
                         For full logs, run: <code>docker logs wifi-manager -f</code>
                     </p>
                 </div>
             `;
+        } else {
+            showLogError('Failed to load manager logs: ' + (data.error || 'Unknown error'));
         }
     } catch (error) {
+        console.error('Error loading manager log:', error);
         showLogError('Error loading manager log: ' + error.message);
     }
 }

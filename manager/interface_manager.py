@@ -267,15 +267,33 @@ class InterfaceManager:
                         # Get more info about this interface
                         try:
                             phy_name = self.get_phy_name(current_iface)
-                            if phy_name:
-                                interfaces[current_iface] = {
-                                    'name': current_iface,
-                                    'phy': phy_name,
-                                    'type': 'wifi',
-                                    'available': True
-                                }
-                        except Exception:
-                            pass
+                            # Get interface state
+                            state_result = subprocess.run(
+                                ["ip", "link", "show", current_iface],
+                                capture_output=True,
+                                timeout=5,
+                                text=True
+                            )
+                            state = 'DOWN'
+                            if 'state UP' in state_result.stdout or 'UP' in state_result.stdout:
+                                state = 'UP'
+                            
+                            interfaces[current_iface] = {
+                                'name': current_iface,
+                                'phy': phy_name,
+                                'type': 'wifi',
+                                'state': state,
+                                'available': True
+                            }
+                        except Exception as e:
+                            logger.debug(f"Could not get full info for {current_iface}: {e}")
+                            # Still add it with basic info
+                            interfaces[current_iface] = {
+                                'name': current_iface,
+                                'type': 'wifi',
+                                'state': 'unknown',
+                                'available': True
+                            }
                             
         except Exception as e:
             logger.error(f"Error listing interfaces: {e}")

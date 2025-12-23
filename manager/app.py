@@ -370,10 +370,26 @@ def api_interfaces():
                     parts = line.split(':')
                     if len(parts) >= 2:
                         iface = parts[1].strip()
-                        interfaces[iface] = {'name': iface, 'type': 'unknown', 'available': True}
+                        # Get interface state
+                        state = 'DOWN'
+                        if 'state UP' in line or 'UP' in line:
+                            state = 'UP'
+                        interfaces[iface] = {
+                            'name': iface, 
+                            'type': 'wifi' if 'wlan' in iface else 'ethernet',
+                            'state': state,
+                            'available': True
+                        }
             return jsonify({"success": True, "interfaces": interfaces, "note": "Basic mode - Docker unavailable"})
         
         interfaces = interface_manager.list_available_interfaces()
+        # Ensure all interfaces have required fields for display
+        for iface_name, iface_info in interfaces.items():
+            if 'state' not in iface_info:
+                iface_info['state'] = 'unknown'
+            if 'type' not in iface_info:
+                iface_info['type'] = 'wifi' if 'wlan' in iface_name else 'ethernet'
+        
         return jsonify({"success": True, "interfaces": interfaces})
     except Exception as e:
         logger.exception(f"Error getting interfaces: {e}")
