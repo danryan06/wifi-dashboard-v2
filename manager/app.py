@@ -45,20 +45,7 @@ os.makedirs(STATS_DIR, exist_ok=True)
 os.makedirs(STATE_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
 
-# Initialize managers with error handling
-try:
-    persona_manager = PersonaManager(state_dir=STATE_DIR)
-    interface_manager = InterfaceManager()
-    logger_init = logging.getLogger(__name__)
-    logger_init.info("Managers initialized successfully")
-except Exception as e:
-    logger_init = logging.getLogger(__name__)
-    logger_init.error(f"Failed to initialize managers: {e}", exc_info=True)
-    # Create dummy managers that will fail gracefully
-    persona_manager = None
-    interface_manager = None
-
-# Setup logging (must be after BASE_DIR is set)
+# Setup logging FIRST (before manager initialization)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -68,6 +55,34 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Initialize managers with error handling (lazy initialization)
+persona_manager = None
+interface_manager = None
+
+def initialize_managers():
+    """Lazy initialization of managers - called on first use"""
+    global persona_manager, interface_manager
+    
+    if persona_manager is not None and interface_manager is not None:
+        return True  # Already initialized
+    
+    try:
+        logger.info("Initializing PersonaManager and InterfaceManager...")
+        persona_manager = PersonaManager(state_dir=STATE_DIR)
+        interface_manager = InterfaceManager()
+        logger.info("✅ Managers initialized successfully")
+        return True
+    except Exception as e:
+        logger.exception(f"Failed to initialize managers: {e}")
+        logger.error("Application will run in limited mode - Docker features unavailable")
+        return False
+
+# Try to initialize, but don't fail if Docker isn't available
+try:
+    initialize_managers()
+except Exception as e:
+    logger.error(f"Manager initialization failed: {e}")
 
 # State tracking for throughput
 _state_lock = threading.Lock()
@@ -140,17 +155,26 @@ def static_files(filename):
 def status():
     """API endpoint for status information"""
     try:
+        # Try to initialize managers if not already done
+        initialize_managers()
+        
         ssid, password = read_config()
         
         # Get persona status
         personas = []
         if persona_manager:
-            personas = persona_manager.list_personas()
+            try:
+                personas = persona_manager.list_personas()
+            except Exception as e:
+                logger.error(f"Error listing personas: {e}")
         
         # Get available interfaces
         interfaces = {}
         if interface_manager:
-            interfaces = interface_manager.list_available_interfaces()
+            try:
+                interfaces = interface_manager.list_available_interfaces()
+            except Exception as e:
+                logger.error(f"Error listing interfaces: {e}")
         
         # Get system info
         try:
@@ -180,8 +204,11 @@ def status():
 def api_list_personas():
     """List all persona containers"""
     try:
-        if not persona_manager:
-            return jsonify({"success": False, "error": "PersonaManager not initialized"}), 500
+        if not initialize_managers():
+            return jsonify({
+                "success": False, 
+                "error": "Docker not available. Check container logs: docker logs wifi-manager"
+            }), 500
         personas = persona_manager.list_personas()
         return jsonify({"success": True, "personas": personas})
     except Exception as e:
@@ -296,8 +323,23 @@ def api_aggregate_logs():
 def api_interfaces():
     """Get available network interfaces"""
     try:
+        # Try to initialize, but interfaces can work without Docker
+        if interface_manager is None:
+            initialize_managers()
+        
         if not interface_manager:
-            return jsonify({"success": False, "error": "InterfaceManager not initialized"}), 500
+            # Fallback: use basic system commands
+            import subprocess
+            result = subprocess.run(['ip', 'link', 'show'], capture_output=True, text=True, timeout=5)
+            interfaces = {}
+            for line in result.stdout.split('\n'):
+                if ':' in line and ('wlan' in line or 'eth' in line):
+                    parts = line.split(':')
+                    if len(parts) >= 2:
+                        iface = parts[1].strip()
+                        interfaces[iface] = {'name': iface, 'type': 'unknown', 'available': True}
+            return jsonify({"success": True, "interfaces": interfaces, "note": "Basic mode - Docker unavailable"})
+        
         interfaces = interface_manager.list_available_interfaces()
         return jsonify({"success": True, "interfaces": interfaces})
     except Exception as e:
@@ -362,6 +404,20 @@ def handle_exception(e):
 def debug_info():
     """Debug endpoint to check application state"""
     try:
+        # Check Docker socket
+        docker_sock_accessible = False
+        docker_sock_perms = "N/A"
+        try:
+            if os.path.exists("/var/run/docker.sock"):
+                docker_sock_perms = oct(os.stat("/var/run/docker.sock").st_mode)[-3:]
+                # Try to connect
+                import docker
+                test_client = docker.from_env()
+                test_client.ping()
+                docker_sock_accessible = True
+        except Exception as e:
+            docker_error = str(e)
+        
         info = {
             "base_dir": BASE_DIR,
             "template_dir": template_dir,
@@ -374,6 +430,12 @@ def debug_info():
             "interface_manager_initialized": interface_manager is not None,
             "config_file_exists": os.path.exists(CONFIG_FILE),
             "log_dir_exists": os.path.exists(LOG_DIR),
+            "docker_sock_exists": os.path.exists("/var/run/docker.sock"),
+            "docker_sock_permissions": docker_sock_perms,
+            "docker_sock_accessible": docker_sock_accessible,
+            "docker_error": docker_error if 'docker_error' in locals() else None,
+            "current_user": os.getuid(),
+            "current_gid": os.getgid(),
         }
         return jsonify(info)
     except Exception as e:

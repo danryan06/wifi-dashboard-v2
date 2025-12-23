@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   manager:
     build:
@@ -9,7 +7,7 @@ services:
     privileged: true
     network_mode: host
     pid: host  # Critical for seeing other container PIDs to move interfaces
-    user: root  # Run as root to access Docker socket and network operations
+    user: "0:0"  # Explicitly run as root (UID 0, GID 0)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:rw
       - /lib/modules:/lib/modules:ro  # Allows the container to use Wi-Fi drivers
@@ -21,7 +19,7 @@ services:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
     restart: unless-stopped
-    # Note: ports are ignored in host network mode, but kept for documentation
+    # Note: ports are ignored in host network mode
 
   # Persona containers are NOT defined here - they are spawned dynamically
   # by the Manager using the Docker API based on user configuration
