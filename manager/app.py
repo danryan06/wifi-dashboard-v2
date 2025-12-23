@@ -145,7 +145,12 @@ def static_files(filename):
         if not os.path.exists(static_dir):
             logger.warning(f"Static directory not found: {static_dir}")
             return "Static files not found", 404
-        return send_from_directory(static_dir, filename)
+        response = send_from_directory(static_dir, filename)
+        # Add cache-busting headers for JS/CSS files
+        if filename.endswith(('.js', '.css')):
+            response.cache_control.no_cache = True
+            response.cache_control.must_revalidate = True
+        return response
     except Exception as e:
         logger.exception(f"Error serving static file {filename}: {e}")
         return f"Error: {str(e)}", 500
