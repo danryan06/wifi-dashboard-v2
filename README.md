@@ -44,6 +44,29 @@ A scalable, containerized network testing platform that simulates realistic clie
 curl -sSL https://raw.githubusercontent.com/danryan06/wifi-dashboard-v2/main/setup.sh | sudo bash
 ```
 
+### Installation Options
+
+The installer automatically handles cleanup of existing installations:
+
+- **Standard Install**: Automatically stops old services/containers and backs them up
+- **Force Clean Install**: `FORCE_CLEAN_INSTALL=true curl -sSL ... | sudo bash`
+- **Clean Docker Images**: `CLEAN_DOCKER_IMAGES=true curl -sSL ... | sudo bash`
+- **Clean Old Logs**: `CLEAN_LOGS=true curl -sSL ... | sudo bash`
+
+### Standalone Cleanup Script
+
+If you need to clean up without reinstalling:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/danryan06/wifi-dashboard-v2/main/cleanup.sh | sudo bash
+```
+
+Options:
+- `REMOVE_V2_DIR=true` - Remove v2 installation directory
+- `REMOVE_IMAGES=true` - Remove Docker images
+- `REMOVE_LOGS=true` - Remove log files
+- `FORCE=true` - Skip confirmation prompt
+
 This will:
 - Install Docker and Docker Compose (if not present)
 - Clean up any old systemd-based installations

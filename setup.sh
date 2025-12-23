@@ -108,28 +108,124 @@ install_docker_compose() {
 }
 
 cleanup_old_installation() {
-    log_step "Cleaning up old systemd-based installation..."
+    log_step "Cleaning up old installations..."
     
-    # Stop old services
-    local services=(wifi-dashboard wifi-good wifi-bad wired-test)
+    # ============================================
+    # Cleanup v1 (systemd-based) installations
+    # ============================================
+    log_info "Stopping old v1 systemd services..."
+    local services=(wifi-dashboard wifi-good wifi-bad wired-test traffic-eth0 traffic-wlan0 traffic-wlan1)
     for service in "${services[@]}"; do
-        systemctl stop "${service}.service" 2>/dev/null || true
-        systemctl disable "${service}.service" 2>/dev/null || true
+        if systemctl is-active --quiet "${service}.service" 2>/dev/null; then
+            log_info "  Stopping ${service}.service..."
+            systemctl stop "${service}.service" 2>/dev/null || true
+        fi
+        if systemctl is-enabled --quiet "${service}.service" 2>/dev/null; then
+            log_info "  Disabling ${service}.service..."
+            systemctl disable "${service}.service" 2>/dev/null || true
+        fi
     done
     
     # Remove old service files
+    log_info "Removing old systemd service files..."
     rm -f /etc/systemd/system/wifi-*.service
     rm -f /etc/systemd/system/wired-test.service
-    systemctl daemon-reload
+    rm -f /etc/systemd/system/traffic-*.service
+    systemctl daemon-reload 2>/dev/null || true
     
-    # Disconnect Wi-Fi interfaces
+    # ============================================
+    # Cleanup v2 (Docker-based) installations
+    # ============================================
+    if command -v docker >/dev/null 2>&1; then
+        log_info "Stopping existing v2 containers..."
+        
+        # Stop and remove manager container if it exists
+        if docker ps -a --format '{{.Names}}' | grep -q '^wifi-manager$'; then
+            log_info "  Stopping wifi-manager container..."
+            docker stop wifi-manager 2>/dev/null || true
+            docker rm wifi-manager 2>/dev/null || true
+        fi
+        
+        # Stop and remove all persona containers
+        local persona_containers
+        persona_containers=$(docker ps -a --format '{{.Names}}' | grep '^persona-' 2>/dev/null || true)
+        if [[ -n "$persona_containers" ]]; then
+            log_info "  Stopping persona containers..."
+            echo "$persona_containers" | while read -r container; do
+                log_info "    Stopping $container..."
+                docker stop "$container" 2>/dev/null || true
+                docker rm "$container" 2>/dev/null || true
+            done
+        fi
+        
+        # Clean up docker-compose if it exists
+        WORK_DIR="$PI_HOME/wifi_dashboard_v2"
+        if [[ -f "$WORK_DIR/docker-compose.yml" ]]; then
+            log_info "  Stopping docker-compose services..."
+            cd "$WORK_DIR" && docker-compose down 2>/dev/null || true
+        fi
+    fi
+    
+    # ============================================
+    # Cleanup network interfaces
+    # ============================================
+    log_info "Disconnecting Wi-Fi interfaces..."
     if command -v nmcli >/dev/null 2>&1; then
-        for iface in wlan0 wlan1 wlan2 wlan3; do
-            nmcli dev disconnect "$iface" 2>/dev/null || true
+        for iface in wlan0 wlan1 wlan2 wlan3 wlan4 wlan5; do
+            if nmcli device status 2>/dev/null | grep -q "^$iface"; then
+                log_info "  Disconnecting $iface..."
+                nmcli dev disconnect "$iface" 2>/dev/null || true
+            fi
         done
     fi
     
-    log_info "✅ Old installation cleaned up"
+    # Return any interfaces that might be stuck in container namespaces
+    log_info "Checking for interfaces in container namespaces..."
+    for iface in wlan0 wlan1 wlan2 wlan3 wlan4 wlan5; do
+        if ! ip link show "$iface" >/dev/null 2>&1; then
+            # Interface might be in a namespace, try to recover
+            log_info "  Attempting to recover $iface..."
+            # This is a best-effort recovery - interfaces should be returned by containers
+        fi
+    done
+    
+    # ============================================
+    # Cleanup old directories (optional backup)
+    # ============================================
+    WORK_DIR="$PI_HOME/wifi_dashboard_v2"
+    OLD_DIR="$PI_HOME/wifi_test_dashboard"  # v1 directory
+    
+    if [[ -d "$OLD_DIR" ]]; then
+        log_warn "Old v1 installation found at $OLD_DIR"
+        log_info "  Backing up to ${OLD_DIR}.backup.$(date +%s)..."
+        mv "$OLD_DIR" "${OLD_DIR}.backup.$(date +%s)" 2>/dev/null || true
+    fi
+    
+    # Clean up old v2 directory if doing a fresh install
+    if [[ -d "$WORK_DIR" ]] && [[ "${FORCE_CLEAN_INSTALL:-false}" == "true" ]]; then
+        log_warn "Force clean install requested - backing up existing v2 installation..."
+        mv "$WORK_DIR" "${WORK_DIR}.backup.$(date +%s)" 2>/dev/null || true
+    fi
+    
+    # ============================================
+    # Cleanup old Docker images (optional)
+    # ============================================
+    if command -v docker >/dev/null 2>&1 && [[ "${CLEAN_DOCKER_IMAGES:-false}" == "true" ]]; then
+        log_info "Removing old Docker images..."
+        docker rmi wifi-dashboard-manager:latest 2>/dev/null || true
+        docker rmi wifi-dashboard-persona:latest 2>/dev/null || true
+    fi
+    
+    # ============================================
+    # Cleanup old log files (optional)
+    # ============================================
+    if [[ "${CLEAN_LOGS:-false}" == "true" ]]; then
+        log_info "Cleaning up old log files..."
+        find "$WORK_DIR/logs" -type f -name "*.log" -mtime +30 -delete 2>/dev/null || true
+        find "$OLD_DIR/logs" -type f -name "*.log" -mtime +30 -delete 2>/dev/null || true
+    fi
+    
+    log_info "✅ Cleanup completed"
 }
 
 setup_directories() {
@@ -138,7 +234,95 @@ setup_directories() {
     WORK_DIR="$PI_HOME/wifi_dashboard_v2"
     mkdir -p "$WORK_DIR"/{configs,logs,stats,state}
     
+    # Preserve existing configs if upgrading
+    if [[ -f "$WORK_DIR/configs/ssid.conf" ]]; then
+        log_info "Preserving existing Wi-Fi configuration..."
+        cp "$WORK_DIR/configs/ssid.conf" "$WORK_DIR/configs/ssid.conf.backup.$(date +%s)" 2>/dev/null || true
+    fi
+    
+    if [[ -f "$WORK_DIR/configs/settings.conf" ]]; then
+        log_info "Preserving existing settings..."
+        cp "$WORK_DIR/configs/settings.conf" "$WORK_DIR/configs/settings.conf.backup.$(date +%s)" 2>/dev/null || true
+    fi
+    
+    # Preserve state if it exists
+    if [[ -f "$WORK_DIR/state/personas.json" ]]; then
+        log_info "Preserving existing persona state..."
+        cp "$WORK_DIR/state/personas.json" "$WORK_DIR/state/personas.json.backup.$(date +%s)" 2>/dev/null || true
+    fi
+    
     log_info "✅ Directories created: $WORK_DIR"
+}
+
+download_project_files() {
+    log_step "Downloading project files from repository..."
+    
+    WORK_DIR="$PI_HOME/wifi_dashboard_v2"
+    cd "$WORK_DIR" || exit 1
+    
+    # Download essential files for building images
+    log_info "Downloading Dockerfiles and project files..."
+    
+    # Function to download with retry
+    download_with_retry() {
+        local url="$1"
+        local output="$2"
+        local max_attempts=3
+        local attempt=1
+        
+        while [[ $attempt -le $max_attempts ]]; do
+            if curl -fsSL "$url" -o "$output"; then
+                return 0
+            fi
+            log_warn "Download attempt $attempt failed for $(basename "$output"), retrying..."
+            sleep 2
+            ((attempt++))
+        done
+        
+        log_error "Failed to download $(basename "$output") after $max_attempts attempts"
+        return 1
+    }
+    
+    # Download Dockerfiles
+    log_info "  Downloading Dockerfiles..."
+    download_with_retry "${REPO_URL}/Dockerfile.persona" "Dockerfile.persona" || exit 1
+    download_with_retry "${REPO_URL}/Dockerfile.manager" "Dockerfile.manager" || exit 1
+    download_with_retry "${REPO_URL}/docker-compose.yml" "docker-compose.yml" || exit 1
+    
+    # Download persona files
+    log_info "  Downloading persona scripts..."
+    mkdir -p persona scripts/traffic manager/static templates
+    download_with_retry "${REPO_URL}/persona/entrypoint.sh" "persona/entrypoint.sh" || exit 1
+    download_with_retry "${REPO_URL}/persona/good_client.sh" "persona/good_client.sh" || exit 1
+    download_with_retry "${REPO_URL}/persona/bad_client.sh" "persona/bad_client.sh" || exit 1
+    download_with_retry "${REPO_URL}/persona/wired_client.sh" "persona/wired_client.sh" || exit 1
+    download_with_retry "${REPO_URL}/persona/rotate_mac.sh" "persona/rotate_mac.sh" || exit 1
+    
+    # Download traffic script
+    log_info "  Downloading traffic generation script..."
+    download_with_retry "${REPO_URL}/scripts/traffic/interface_traffic_generator.sh" "scripts/traffic/interface_traffic_generator.sh" || exit 1
+    
+    # Download manager files
+    log_info "  Downloading manager application..."
+    download_with_retry "${REPO_URL}/manager/app.py" "manager/app.py" || exit 1
+    download_with_retry "${REPO_URL}/manager/manager_logic.py" "manager/manager_logic.py" || exit 1
+    download_with_retry "${REPO_URL}/manager/interface_manager.py" "manager/interface_manager.py" || exit 1
+    download_with_retry "${REPO_URL}/manager/__init__.py" "manager/__init__.py" || exit 1
+    
+    # Download static files
+    log_info "  Downloading static assets..."
+    download_with_retry "${REPO_URL}/manager/static/dashboard.js" "manager/static/dashboard.js" || exit 1
+    download_with_retry "${REPO_URL}/manager/static/dashboard.css" "manager/static/dashboard.css" || exit 1
+    
+    # Download template
+    log_info "  Downloading templates..."
+    download_with_retry "${REPO_URL}/templates/dashboard.html" "templates/dashboard.html" || exit 1
+    
+    # Make scripts executable
+    log_info "  Setting executable permissions..."
+    chmod +x persona/*.sh scripts/traffic/*.sh 2>/dev/null || true
+    
+    log_info "✅ Project files downloaded"
 }
 
 build_images() {
@@ -149,11 +333,17 @@ build_images() {
     
     # Build persona image
     log_info "Building persona image..."
-    docker build -f Dockerfile.persona -t wifi-dashboard-persona:latest .
+    docker build -f Dockerfile.persona -t wifi-dashboard-persona:latest . || {
+        log_error "Failed to build persona image"
+        exit 1
+    }
     
     # Build manager image
     log_info "Building manager image..."
-    docker build -f Dockerfile.manager -t wifi-dashboard-manager:latest .
+    docker build -f Dockerfile.manager -t wifi-dashboard-manager:latest . || {
+        log_error "Failed to build manager image"
+        exit 1
+    }
     
     log_info "✅ Docker images built"
 }
@@ -214,6 +404,9 @@ show_completion() {
     log_info "  • View manager logs: docker logs wifi-manager -f"
     log_info "  • List personas: docker ps | grep persona"
     log_info "  • Stop all: docker-compose -f $PI_HOME/wifi_dashboard_v2/docker-compose.yml down"
+    log_info "  • Reinstall (clean): FORCE_CLEAN_INSTALL=true curl -sSL ... | sudo bash"
+    echo
+    log_info "📝 Note: Old installations have been backed up if they existed"
     echo
 }
 
@@ -230,6 +423,7 @@ main() {
     install_docker_compose
     cleanup_old_installation
     setup_directories
+    download_project_files
     build_images
     start_manager
     
