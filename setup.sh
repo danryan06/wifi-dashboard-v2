@@ -375,11 +375,18 @@ start_manager() {
         # Check if container can access Docker socket
         log_info "Verifying Docker socket access in container..."
         if docker exec wifi-manager ls -la /var/run/docker.sock >/dev/null 2>&1; then
-            log_info "✅ Container can access Docker socket"
+            log_info "✅ Docker socket file is visible in container"
+            # Actually test Docker API access
+            if docker exec wifi-manager python3 -c "import docker; c=docker.from_env(); c.ping()" >/dev/null 2>&1; then
+                log_info "✅ Container can access Docker API"
+            else
+                log_warn "⚠️ Container cannot access Docker API (permission issue)"
+                log_warn "   The app will run in limited mode"
+                log_warn "   Try: sudo chmod 666 /var/run/docker.sock"
+            fi
         else
-            log_warn "⚠️ Container may not be able to access Docker socket"
+            log_warn "⚠️ Docker socket not found in container"
             log_warn "   Check logs: docker logs wifi-manager"
-            log_warn "   The app will run in limited mode if Docker is unavailable"
         fi
     else
         log_error "❌ Manager container failed to start"

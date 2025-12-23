@@ -17,19 +17,34 @@ class InterfaceManager:
     """Handles moving physical Wi-Fi interfaces into Docker container namespaces."""
     
     def __init__(self):
+        # Lazy initialization - don't connect until actually needed
+        self.client = None
+        self._initialized = False
+    
+    def _ensure_client(self):
+        """Lazy initialization of Docker client"""
+        if self._initialized and self.client is not None:
+            return True
+        
         try:
             # Try to connect to Docker socket
             self.client = docker.from_env()
             # Test the connection
             self.client.ping()
+            self._initialized = True
             logger.info("Docker client initialized successfully")
+            return True
         except docker.errors.DockerException as e:
             logger.error(f"Failed to initialize Docker client: {e}")
             logger.error("Make sure Docker socket is accessible: /var/run/docker.sock")
-            raise
+            self.client = None
+            self._initialized = False
+            return False
         except Exception as e:
             logger.error(f"Unexpected error initializing Docker client: {e}")
-            raise
+            self.client = None
+            self._initialized = False
+            return False
 
     def get_phy_name(self, interface: str) -> Optional[str]:
         """Finds the 'phyX' name for a given 'wlanX' interface."""
@@ -75,6 +90,9 @@ class InterfaceManager:
         Returns:
             Tuple of (success: bool, message: str)
         """
+        if not self._ensure_client():
+            return False, "Docker client not available - check Docker socket permissions"
+        
         try:
             container = self.client.containers.get(container_name)
             pid = container.attrs['State']['Pid']

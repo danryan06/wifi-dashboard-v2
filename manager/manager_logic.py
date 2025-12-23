@@ -42,12 +42,40 @@ class PersonaManager:
     }
     
     def __init__(self, state_dir: str = "/app/state"):
+        # Lazy initialization - don't connect to Docker until needed
+        self.client = None
+        self._client_initialized = False
+        self.interface_manager = InterfaceManager()  # This no longer connects immediately
+        self.state_dir = state_dir
+        self.state_file = os.path.join(state_dir, "personas.json")
+        os.makedirs(state_dir, exist_ok=True)
+        
+        # Load persisted state (doesn't require Docker)
+        self.state = self._load_state()
+        logger.info(f"PersonaManager initialized with state_dir: {state_dir}")
+    
+    def _ensure_client(self):
+        """Lazy initialization of Docker client"""
+        if self._client_initialized and self.client is not None:
+            return True
+        
         try:
             self.client = docker.from_env()
-            self.interface_manager = InterfaceManager()
-            self.state_dir = state_dir
-            self.state_file = os.path.join(state_dir, "personas.json")
-            os.makedirs(state_dir, exist_ok=True)
+            self.client.ping()
+            self._client_initialized = True
+            logger.info("Docker client initialized successfully")
+            return True
+        except docker.errors.DockerException as e:
+            logger.error(f"Failed to initialize Docker client: {e}")
+            logger.error("Make sure Docker socket is accessible: /var/run/docker.sock")
+            self.client = None
+            self._client_initialized = False
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error initializing Docker client: {e}")
+            self.client = None
+            self._client_initialized = False
+            return False
             
             # Load persisted state
             self.state = self._load_state()
@@ -138,6 +166,10 @@ class PersonaManager:
             for key, value in kwargs.items():
                 env_vars[key.upper()] = str(value)
 
+            # Ensure Docker client is initialized
+            if not self._ensure_client():
+                return False, "Docker client not available - check Docker socket permissions", None
+            
             # Create container with host network mode for Wi-Fi access
             container = self.client.containers.create(
                 image=config['image'],
@@ -216,6 +248,9 @@ class PersonaManager:
         Returns:
             Tuple of (success: bool, message: str)
         """
+        if not self._ensure_client():
+            return False, "Docker client not available - check Docker socket permissions"
+        
         try:
             if container_name:
                 container = self.client.containers.get(container_name)
@@ -305,6 +340,9 @@ class PersonaManager:
     def list_personas(self) -> List[Dict]:
         """List all running persona containers."""
         personas = []
+        
+        if not self._ensure_client():
+            return []  # Return empty list if Docker unavailable
         
         try:
             # Get all containers with our naming pattern
