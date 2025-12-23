@@ -8,14 +8,16 @@ RUN apk add --no-cache \
     iproute2 \
     iw \
     wireless-tools \
-    wpasupplicant \
+    wpa_supplicant \
     dhcpcd \
     netcat-openbsd \
     python3 \
     py3-pip \
     nmap \
-    tcpdump \
-    && pip3 install --no-cache-dir \
+    tcpdump
+
+# Install Python packages
+RUN pip3 install --no-cache-dir \
     speedtest-cli \
     yt-dlp
 
