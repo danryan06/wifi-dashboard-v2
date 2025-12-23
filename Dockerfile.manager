@@ -26,7 +26,12 @@ COPY templates/ ./templates/
 COPY configs/ ./configs/
 
 # Create necessary directories
-RUN mkdir -p /app/logs /app/stats /app/state
+RUN mkdir -p /app/logs /app/stats /app/state /app/configs
+
+# Verify files were copied
+RUN ls -la /app/manager/ && \
+    ls -la /app/templates/ && \
+    ls -la /app/manager/static/ 2>/dev/null || echo "Static directory may not exist yet"
 
 # Expose dashboard port
 EXPOSE 5000

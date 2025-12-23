@@ -8,6 +8,7 @@ import os
 import logging
 import time
 import json
+import traceback
 from datetime import datetime
 import threading
 import psutil
@@ -111,10 +112,14 @@ def index():
     """Main dashboard page"""
     try:
         ssid, _ = read_config()
+        template_path = os.path.join(app.template_folder, "dashboard.html")
+        if not os.path.exists(template_path):
+            logger.error(f"Template not found at: {template_path}")
+            return f"<h1>Error</h1><p>Template not found at: {template_path}</p><p>Template folder: {app.template_folder}</p>", 500
         return render_template("dashboard.html", ssid=ssid)
     except Exception as e:
         logger.exception(f"Error in index route: {e}")
-        return f"<h1>Error</h1><p>Failed to load dashboard: {str(e)}</p>", 500
+        return f"<h1>Error</h1><p>Failed to load dashboard: {str(e)}</p><pre>{traceback.format_exc()}</pre>", 500
 
 
 @app.route("/static/<path:filename>")
@@ -352,6 +357,27 @@ def internal_error(error):
 def handle_exception(e):
     logger.exception(f"Unhandled exception: {e}")
     return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/debug")
+def debug_info():
+    """Debug endpoint to check application state"""
+    try:
+        info = {
+            "base_dir": BASE_DIR,
+            "template_dir": template_dir,
+            "static_dir": static_dir,
+            "template_exists": os.path.exists(template_dir),
+            "static_exists": os.path.exists(static_dir),
+            "template_files": os.listdir(template_dir) if os.path.exists(template_dir) else [],
+            "static_files": os.listdir(static_dir) if os.path.exists(static_dir) else [],
+            "persona_manager_initialized": persona_manager is not None,
+            "interface_manager_initialized": interface_manager is not None,
+            "config_file_exists": os.path.exists(CONFIG_FILE),
+            "log_dir_exists": os.path.exists(LOG_DIR),
+        }
+        return jsonify(info)
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 if __name__ == "__main__":
     logger.info("Wi-Fi Dashboard Manager v2.0 starting")
