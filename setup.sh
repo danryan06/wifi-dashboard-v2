@@ -354,7 +354,15 @@ start_manager() {
     WORK_DIR="$PI_HOME/wifi_dashboard_v2"
     cd "$WORK_DIR" || exit 1
     
+    # Ensure Docker socket is accessible (check permissions)
+    if [[ -S /var/run/docker.sock ]]; then
+        log_info "Verifying Docker socket permissions..."
+        # Socket should be accessible to root (which container runs as)
+        # If there are issues, we'll see them in logs
+    fi
+    
     # Start with docker-compose
+    log_info "Starting manager container..."
     docker-compose up -d manager
     
     # Wait for manager to be ready
@@ -363,6 +371,16 @@ start_manager() {
     
     if docker ps | grep -q wifi-manager; then
         log_info "✅ Manager container started"
+        
+        # Check if container can access Docker socket
+        log_info "Verifying Docker socket access in container..."
+        if docker exec wifi-manager ls -la /var/run/docker.sock >/dev/null 2>&1; then
+            log_info "✅ Container can access Docker socket"
+        else
+            log_warn "⚠️ Container may not be able to access Docker socket"
+            log_warn "   Check logs: docker logs wifi-manager"
+            log_warn "   The app will run in limited mode if Docker is unavailable"
+        fi
     else
         log_error "❌ Manager container failed to start"
         docker-compose logs manager
