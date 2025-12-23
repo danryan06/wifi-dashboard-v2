@@ -52,8 +52,13 @@ class PersonaManager:
             # Load persisted state
             self.state = self._load_state()
             
+            logger.info(f"PersonaManager initialized with state_dir: {state_dir}")
+            
+        except docker.errors.DockerException as e:
+            logger.error(f"Failed to connect to Docker: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Failed to initialize PersonaManager: {e}")
+            logger.exception(f"Failed to initialize PersonaManager: {e}")
             raise
 
     def _load_state(self) -> Dict:

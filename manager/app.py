@@ -14,24 +14,50 @@ import psutil
 from .manager_logic import PersonaManager
 from .interface_manager import InterfaceManager
 
-app = Flask(__name__)
+# Determine base directory - handle both development and container environments
+if os.path.exists("/app"):
+    # Running in container
+    BASE_DIR = "/app"
+else:
+    # Running locally
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Configure Flask with explicit template and static folders
+template_dir = os.path.join(BASE_DIR, "templates")
+static_dir = os.path.join(BASE_DIR, "manager", "static")
+
+app = Flask(__name__, 
+            template_folder=template_dir,
+            static_folder=static_dir,
+            static_url_path='/static')
 app.secret_key = 'wifi-test-dashboard-secret-key'
 
-# Configuration
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Configuration paths
 CONFIG_FILE = os.path.join(BASE_DIR, "configs", "ssid.conf")
 SETTINGS_FILE = os.path.join(BASE_DIR, "configs", "settings.conf")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 STATS_DIR = os.path.join(BASE_DIR, "stats")
+STATE_DIR = os.path.join(BASE_DIR, "state")
 
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(STATS_DIR, exist_ok=True)
+os.makedirs(STATE_DIR, exist_ok=True)
+os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
 
-# Initialize managers
-persona_manager = PersonaManager()
-interface_manager = InterfaceManager()
+# Initialize managers with error handling
+try:
+    persona_manager = PersonaManager(state_dir=STATE_DIR)
+    interface_manager = InterfaceManager()
+    logger_init = logging.getLogger(__name__)
+    logger_init.info("Managers initialized successfully")
+except Exception as e:
+    logger_init = logging.getLogger(__name__)
+    logger_init.error(f"Failed to initialize managers: {e}", exc_info=True)
+    # Create dummy managers that will fail gracefully
+    persona_manager = None
+    interface_manager = None
 
-# Setup logging
+# Setup logging (must be after BASE_DIR is set)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -83,16 +109,26 @@ def write_config(ssid, password):
 @app.route("/")
 def index():
     """Main dashboard page"""
-    ssid, _ = read_config()
-    return render_template("dashboard.html", ssid=ssid)
+    try:
+        ssid, _ = read_config()
+        return render_template("dashboard.html", ssid=ssid)
+    except Exception as e:
+        logger.exception(f"Error in index route: {e}")
+        return f"<h1>Error</h1><p>Failed to load dashboard: {str(e)}</p>", 500
 
 
 @app.route("/static/<path:filename>")
 def static_files(filename):
     """Serve static files"""
-    import os
-    static_dir = os.path.join(BASE_DIR, "manager", "static")
-    return send_from_directory(static_dir, filename)
+    try:
+        static_dir = os.path.join(BASE_DIR, "manager", "static")
+        if not os.path.exists(static_dir):
+            logger.warning(f"Static directory not found: {static_dir}")
+            return "Static files not found", 404
+        return send_from_directory(static_dir, filename)
+    except Exception as e:
+        logger.exception(f"Error serving static file {filename}: {e}")
+        return f"Error: {str(e)}", 500
 
 
 @app.route("/status")
@@ -102,10 +138,14 @@ def status():
         ssid, password = read_config()
         
         # Get persona status
-        personas = persona_manager.list_personas()
+        personas = []
+        if persona_manager:
+            personas = persona_manager.list_personas()
         
         # Get available interfaces
-        interfaces = interface_manager.list_available_interfaces()
+        interfaces = {}
+        if interface_manager:
+            interfaces = interface_manager.list_available_interfaces()
         
         # Get system info
         try:
@@ -135,10 +175,12 @@ def status():
 def api_list_personas():
     """List all persona containers"""
     try:
+        if not persona_manager:
+            return jsonify({"success": False, "error": "PersonaManager not initialized"}), 500
         personas = persona_manager.list_personas()
         return jsonify({"success": True, "personas": personas})
     except Exception as e:
-        logger.error(f"Error listing personas: {e}")
+        logger.exception(f"Error listing personas: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -146,6 +188,9 @@ def api_list_personas():
 def api_start_persona():
     """Start a new persona container"""
     try:
+        if not persona_manager:
+            return jsonify({"success": False, "error": "PersonaManager not initialized"}), 500
+            
         data = request.get_json()
         persona_type = data.get("persona_type")
         interface = data.get("interface")
@@ -186,6 +231,8 @@ def api_start_persona():
 def api_stop_persona(container_id):
     """Stop a persona container"""
     try:
+        if not persona_manager:
+            return jsonify({"success": False, "error": "PersonaManager not initialized"}), 500
         success, message = persona_manager.stop_persona(container_id=container_id)
         
         if success:
@@ -202,11 +249,13 @@ def api_stop_persona(container_id):
 def api_persona_logs(container_id):
     """Get logs from a persona container"""
     try:
+        if not persona_manager:
+            return jsonify({"success": False, "error": "PersonaManager not initialized"}), 500
         tail = int(request.args.get("tail", 100))
         logs = persona_manager.get_persona_logs(container_id, tail=tail)
         return jsonify({"success": True, "logs": logs})
     except Exception as e:
-        logger.error(f"Error getting logs: {e}")
+        logger.exception(f"Error getting logs: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -214,11 +263,13 @@ def api_persona_logs(container_id):
 def api_aggregate_logs():
     """Get aggregated logs from all persona containers"""
     try:
+        if not persona_manager:
+            return jsonify({"success": False, "error": "PersonaManager not initialized"}), 500
         personas = persona_manager.list_personas()
         aggregated = {}
         
         for persona in personas:
-            if persona['status'] == 'running':
+            if persona.get('status') == 'running':
                 try:
                     logs = persona_manager.get_persona_logs(persona['id'], tail=50)
                     aggregated[persona['id']] = {
@@ -232,7 +283,7 @@ def api_aggregate_logs():
         
         return jsonify({"success": True, "aggregated": aggregated})
     except Exception as e:
-        logger.error(f"Error aggregating logs: {e}")
+        logger.exception(f"Error aggregating logs: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -240,10 +291,12 @@ def api_aggregate_logs():
 def api_interfaces():
     """Get available network interfaces"""
     try:
+        if not interface_manager:
+            return jsonify({"success": False, "error": "InterfaceManager not initialized"}), 500
         interfaces = interface_manager.list_available_interfaces()
         return jsonify({"success": True, "interfaces": interfaces})
     except Exception as e:
-        logger.error(f"Error getting interfaces: {e}")
+        logger.exception(f"Error getting interfaces: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -275,6 +328,8 @@ def update_wifi():
 def shutdown():
     """Graceful shutdown - stop all personas"""
     try:
+        if not persona_manager:
+            return jsonify({"success": False, "error": "PersonaManager not initialized"}), 500
         logger.info("Shutdown requested - stopping all personas")
         results = persona_manager.cleanup_all()
         return jsonify({
@@ -283,10 +338,26 @@ def shutdown():
             "results": results
         })
     except Exception as e:
-        logger.error(f"Error during shutdown: {e}")
+        logger.exception(f"Error during shutdown: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+# Error handler for debugging
+@app.errorhandler(500)
+def internal_error(error):
+    logger.exception("Internal server error occurred")
+    return jsonify({"success": False, "error": "Internal server error. Check logs for details."}), 500
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.exception(f"Unhandled exception: {e}")
+    return jsonify({"success": False, "error": str(e)}), 500
+
 if __name__ == "__main__":
     logger.info("Wi-Fi Dashboard Manager v2.0 starting")
+    logger.info(f"BASE_DIR: {BASE_DIR}")
+    logger.info(f"Template dir: {template_dir}")
+    logger.info(f"Static dir: {static_dir}")
+    logger.info(f"Templates exist: {os.path.exists(template_dir)}")
+    logger.info(f"Static exists: {os.path.exists(static_dir)}")
     app.run(host="0.0.0.0", port=5000, debug=False)
