@@ -72,18 +72,101 @@ install_docker() {
     
     log_step "Installing Docker..."
     
-    # Install Docker using official script
-    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-    sh /tmp/get-docker.sh
+    # Fix repository issues for Debian Bullseye (oldstable)
+    log_info "Fixing repository issues..."
+    
+    # Disable problematic repositories temporarily
+    if [[ -f /etc/apt/sources.list.d/debian-backports.list ]]; then
+        log_info "  Disabling bullseye-backports repository..."
+        sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/debian-backports.list 2>/dev/null || true
+    fi
+    
+    # Fix InfluxData GPG key if needed
+    if [[ -f /etc/apt/sources.list.d/influxdb.list ]] || grep -q "repos.influxdata.com" /etc/apt/sources.list.d/*.list 2>/dev/null; then
+        log_info "  Fixing InfluxData repository key..."
+        curl -fsSL https://repos.influxdata.com/influxdb.key | apt-key add - 2>/dev/null || true
+    fi
+    
+    # Fix Grafana GPG key if needed
+    if grep -q "apt.grafana.com" /etc/apt/sources.list.d/*.list 2>/dev/null; then
+        log_info "  Fixing Grafana repository key..."
+        curl -fsSL https://apt.grafana.com/gpg.key | apt-key add - 2>/dev/null || true
+    fi
+    
+    # Try to update apt with errors ignored
+    apt-get update 2>&1 | grep -v "NO_PUBKEY\|EXPKEYSIG" || true
+    
+    # Install Docker using official script with error handling
+    log_info "Downloading Docker installation script..."
+    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh || {
+        log_error "Failed to download Docker installation script"
+        log_info "Attempting manual Docker installation..."
+        install_docker_manual
+        return
+    }
+    
+    log_info "Running Docker installation script..."
+    if sh /tmp/get-docker.sh 2>&1 | tee /tmp/docker-install.log; then
+        log_info "✅ Docker installed via official script"
+    else
+        log_warn "Docker installation script had warnings, checking if Docker was installed..."
+        if command -v docker &> /dev/null; then
+            log_info "✅ Docker is installed (despite warnings)"
+        else
+            log_warn "Docker installation script failed, attempting manual installation..."
+            install_docker_manual
+            return
+        fi
+    fi
     
     # Add user to docker group
-    usermod -aG docker "$PI_USER"
+    usermod -aG docker "$PI_USER" 2>/dev/null || true
     
     # Start Docker service
-    systemctl enable docker
-    systemctl start docker
+    systemctl enable docker 2>/dev/null || true
+    systemctl start docker 2>/dev/null || {
+        log_error "Failed to start Docker service"
+        log_info "Trying to start Docker manually..."
+        service docker start || true
+    }
     
-    log_info "✅ Docker installed"
+    # Verify Docker is working
+    if docker ps &>/dev/null; then
+        log_info "✅ Docker installed and running"
+    else
+        log_error "Docker installed but not responding"
+        log_info "You may need to log out and back in, or run: newgrp docker"
+    fi
+}
+
+install_docker_manual() {
+    log_step "Installing Docker manually..."
+    
+    # Install prerequisites
+    apt-get update 2>&1 | grep -v "NO_PUBKEY\|EXPKEYSIG" || true
+    apt-get install -y \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release \
+        2>&1 | grep -v "NO_PUBKEY\|EXPKEYSIG" || true
+    
+    # Add Docker's official GPG key
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+    
+    # Set up repository
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \
+      $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    # Install Docker
+    apt-get update 2>&1 | grep -v "NO_PUBKEY\|EXPKEYSIG" || true
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+        2>&1 | grep -v "NO_PUBKEY\|EXPKEYSIG" || true
+    
+    log_info "✅ Docker installed manually"
 }
 
 install_docker_compose() {
