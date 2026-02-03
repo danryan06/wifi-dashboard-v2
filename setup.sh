@@ -19,6 +19,18 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()  { echo -e "${BLUE}[STEP]${NC} $1"; }
 
+# Helper function to use docker compose (plugin) or docker-compose (standalone)
+docker_compose_cmd() {
+    if docker compose version &>/dev/null; then
+        docker compose "$@"
+    elif command -v docker-compose &>/dev/null; then
+        docker-compose "$@"
+    else
+        log_error "Neither 'docker compose' nor 'docker-compose' is available"
+        return 1
+    fi
+}
+
 print_banner() {
     echo -e "${BLUE}"
     cat << 'EOF'
@@ -274,7 +286,7 @@ cleanup_old_installation() {
         WORK_DIR="$PI_HOME/wifi_dashboard_v2"
         if [[ -f "$WORK_DIR/docker-compose.yml" ]]; then
             log_info "  Stopping docker-compose services..."
-            cd "$WORK_DIR" && docker-compose down 2>/dev/null || true
+            cd "$WORK_DIR" && docker_compose_cmd down 2>/dev/null || true
         fi
     fi
     
@@ -473,9 +485,9 @@ start_manager() {
         # If there are issues, we'll see them in logs
     fi
     
-    # Start with docker-compose
+    # Start with docker compose
     log_info "Starting manager container..."
-    docker-compose up -d manager
+    docker_compose_cmd up -d manager
     
     # Wait for manager to be ready
     log_info "Waiting for manager to start..."
@@ -502,7 +514,7 @@ start_manager() {
         fi
     else
         log_error "❌ Manager container failed to start"
-        docker-compose logs manager
+        docker_compose_cmd logs manager
         exit 1
     fi
 }
@@ -540,7 +552,7 @@ show_completion() {
     log_info "🔧 Useful Commands:"
     log_info "  • View manager logs: docker logs wifi-manager -f"
     log_info "  • List personas: docker ps | grep persona"
-    log_info "  • Stop all: docker-compose -f $PI_HOME/wifi_dashboard_v2/docker-compose.yml down"
+    log_info "  • Stop all: docker compose -f $PI_HOME/wifi_dashboard_v2/docker-compose.yml down"
     log_info "  • Reinstall (clean): FORCE_CLEAN_INSTALL=true curl -sSL ... | sudo bash"
     echo
     log_info "📝 Note: Old installations have been backed up if they existed"
