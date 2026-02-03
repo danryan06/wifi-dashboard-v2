@@ -30,6 +30,36 @@ EOF
     echo -e "${NC}"
 }
 
+fix_repository_issues() {
+    log_info "Fixing repository issues for Debian Bullseye..."
+    
+    # Disable problematic backports repository
+    if [[ -f /etc/apt/sources.list.d/debian-backports.list ]]; then
+        log_info "  Disabling bullseye-backports repository..."
+        sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/debian-backports.list 2>/dev/null || true
+    fi
+    
+    # Also check main sources.list file
+    if grep -q "bullseye-backports" /etc/apt/sources.list 2>/dev/null; then
+        log_info "  Disabling bullseye-backports in main sources.list..."
+        sed -i 's|^deb.*bullseye-backports|#deb &|' /etc/apt/sources.list 2>/dev/null || true
+    fi
+    
+    # Fix InfluxData GPG key if needed
+    if [[ -f /etc/apt/sources.list.d/influxdb.list ]] || grep -q "repos.influxdata.com" /etc/apt/sources.list.d/*.list 2>/dev/null; then
+        log_info "  Fixing InfluxData repository key..."
+        curl -fsSL https://repos.influxdata.com/influxdb.key | apt-key add - 2>/dev/null || true
+    fi
+    
+    # Fix Grafana GPG key if needed
+    if grep -q "apt.grafana.com" /etc/apt/sources.list.d/*.list 2>/dev/null; then
+        log_info "  Fixing Grafana repository key..."
+        curl -fsSL https://apt.grafana.com/gpg.key | apt-key add - 2>/dev/null || true
+    fi
+    
+    log_info "✅ Repository fixes applied"
+}
+
 check_prerequisites() {
     log_step "Checking prerequisites..."
     
@@ -37,6 +67,9 @@ check_prerequisites() {
         log_error "This installer must be run as root (use: sudo bash setup.sh)"
         exit 1
     fi
+    
+    # Fix repository issues early
+    fix_repository_issues
     
     # Check if Docker is installed
     if ! command -v docker &> /dev/null; then
@@ -72,29 +105,8 @@ install_docker() {
     
     log_step "Installing Docker..."
     
-    # Fix repository issues for Debian Bullseye (oldstable)
-    log_info "Fixing repository issues..."
-    
-    # Disable problematic repositories temporarily
-    if [[ -f /etc/apt/sources.list.d/debian-backports.list ]]; then
-        log_info "  Disabling bullseye-backports repository..."
-        sed -i 's/^deb/#deb/' /etc/apt/sources.list.d/debian-backports.list 2>/dev/null || true
-    fi
-    
-    # Fix InfluxData GPG key if needed
-    if [[ -f /etc/apt/sources.list.d/influxdb.list ]] || grep -q "repos.influxdata.com" /etc/apt/sources.list.d/*.list 2>/dev/null; then
-        log_info "  Fixing InfluxData repository key..."
-        curl -fsSL https://repos.influxdata.com/influxdb.key | apt-key add - 2>/dev/null || true
-    fi
-    
-    # Fix Grafana GPG key if needed
-    if grep -q "apt.grafana.com" /etc/apt/sources.list.d/*.list 2>/dev/null; then
-        log_info "  Fixing Grafana repository key..."
-        curl -fsSL https://apt.grafana.com/gpg.key | apt-key add - 2>/dev/null || true
-    fi
-    
-    # Try to update apt with errors ignored
-    apt-get update 2>&1 | grep -v "NO_PUBKEY\|EXPKEYSIG" || true
+    # Update apt (repository issues already fixed in check_prerequisites)
+    apt-get update 2>&1 | grep -v "NO_PUBKEY\|EXPKEYSIG\|bullseye-backports" || true
     
     # Install Docker using official script with error handling
     log_info "Downloading Docker installation script..."
@@ -176,18 +188,35 @@ install_docker_compose() {
     
     log_step "Installing Docker Compose..."
     
-    # Install docker-compose-plugin (newer method)
-    apt-get update
-    apt-get install -y docker-compose-plugin
+    # Check if docker-compose-plugin is already installed (installed with Docker)
+    if docker compose version &>/dev/null || dpkg -l | grep -q docker-compose-plugin; then
+        log_info "Docker Compose plugin already installed"
+    else
+        # Install docker-compose-plugin (newer method)
+        log_info "Installing docker-compose-plugin..."
+        apt-get update 2>&1 | grep -v "NO_PUBKEY\|EXPKEYSIG" || true
+        apt-get install -y docker-compose-plugin 2>&1 | grep -v "NO_PUBKEY\|EXPKEYSIG" || {
+            log_warn "Failed to install docker-compose-plugin via apt, will try standalone version"
+        }
+    fi
     
-    # Also install standalone for compatibility
+    # Also install standalone for compatibility (if not already present)
     if ! command -v docker-compose &> /dev/null; then
-        curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
-            -o /usr/local/bin/docker-compose
+        log_info "Installing standalone docker-compose for compatibility..."
+        curl -fsSL -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
+            -o /usr/local/bin/docker-compose || {
+            log_warn "Failed to download standalone docker-compose, but plugin version should work"
+            return 0
+        }
         chmod +x /usr/local/bin/docker-compose
     fi
     
-    log_info "✅ Docker Compose installed"
+    # Verify installation
+    if docker compose version &>/dev/null || command -v docker-compose &>/dev/null; then
+        log_info "✅ Docker Compose installed"
+    else
+        log_warn "⚠️ Docker Compose installation had issues, but continuing..."
+    fi
 }
 
 cleanup_old_installation() {
