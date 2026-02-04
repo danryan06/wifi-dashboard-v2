@@ -243,61 +243,155 @@ class InterfaceManager:
     def list_available_interfaces(self) -> Dict[str, Dict]:
         """
         List all available Wi-Fi interfaces on the host.
+        Uses multiple methods to ensure we catch all interfaces.
         Returns dict mapping interface name to metadata.
         """
         interfaces = {}
         
         try:
-            # Get all network interfaces
-            result = subprocess.run(
-                ["ip", "link", "show"],
-                capture_output=True,
-                timeout=5,
-                text=True
-            )
+            # Method 1: Use 'iw dev' to find all wireless interfaces (most reliable)
+            try:
+                iw_result = subprocess.run(
+                    ["iw", "dev"],
+                    capture_output=True,
+                    timeout=5,
+                    text=True
+                )
+                if iw_result.returncode == 0:
+                    current_iface = None
+                    for line in iw_result.stdout.split('\n'):
+                        # Look for "Interface wlanX" lines
+                        if 'Interface' in line:
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                current_iface = parts[1].strip()
+                                # Initialize interface entry
+                                if current_iface not in interfaces:
+                                    interfaces[current_iface] = {
+                                        'name': current_iface,
+                                        'type': 'wifi',
+                                        'state': 'unknown',
+                                        'available': True
+                                    }
+            except Exception as e:
+                logger.debug(f"iw dev failed: {e}")
             
-            current_iface = None
-            for line in result.stdout.split('\n'):
-                # Interface line: "2: wlan1: <BROADCAST,MULTICAST,UP,LOWER_UP>"
-                if ':' in line and ('wlan' in line or 'wlp' in line):
-                    parts = line.split(':')
-                    if len(parts) >= 2:
-                        current_iface = parts[1].strip()
-                        
-                        # Get more info about this interface
-                        try:
-                            phy_name = self.get_phy_name(current_iface)
-                            # Get interface state
-                            state_result = subprocess.run(
-                                ["ip", "link", "show", current_iface],
-                                capture_output=True,
-                                timeout=5,
-                                text=True
-                            )
-                            state = 'DOWN'
-                            if 'state UP' in state_result.stdout or 'UP' in state_result.stdout:
-                                state = 'UP'
+            # Method 2: Use 'ip link show' to find all network interfaces
+            try:
+                ip_result = subprocess.run(
+                    ["ip", "link", "show"],
+                    capture_output=True,
+                    timeout=5,
+                    text=True
+                )
+                
+                current_iface = None
+                for line in ip_result.stdout.split('\n'):
+                    # Interface line: "2: wlan1: <BROADCAST,MULTICAST,UP,LOWER_UP>"
+                    if ':' in line:
+                        parts = line.split(':')
+                        if len(parts) >= 2:
+                            potential_iface = parts[1].strip().split('@')[0]  # Remove @link suffix
                             
-                            interfaces[current_iface] = {
-                                'name': current_iface,
-                                'phy': phy_name,
-                                'type': 'wifi',
-                                'state': state,
-                                'available': True
-                            }
-                        except Exception as e:
-                            logger.debug(f"Could not get full info for {current_iface}: {e}")
-                            # Still add it with basic info
-                            interfaces[current_iface] = {
-                                'name': current_iface,
+                            # Check if it's a wireless interface (wlan, wlp, or check via iw)
+                            is_wifi = False
+                            if 'wlan' in potential_iface or 'wlp' in potential_iface:
+                                is_wifi = True
+                            else:
+                                # Check if it's a wireless interface using iw
+                                try:
+                                    check_result = subprocess.run(
+                                        ["iw", "dev", potential_iface, "info"],
+                                        capture_output=True,
+                                        timeout=2,
+                                        text=True
+                                    )
+                                    if check_result.returncode == 0:
+                                        is_wifi = True
+                                except:
+                                    pass  # Not a wireless interface
+                            
+                            if is_wifi:
+                                current_iface = potential_iface
+                                if current_iface not in interfaces:
+                                    interfaces[current_iface] = {
+                                        'name': current_iface,
+                                        'type': 'wifi',
+                                        'state': 'unknown',
+                                        'available': True
+                                    }
+            except Exception as e:
+                logger.debug(f"ip link show failed: {e}")
+            
+            # Method 3: Check /sys/class/net/ for any interfaces we might have missed
+            try:
+                if os.path.exists('/sys/class/net'):
+                    for iface_name in os.listdir('/sys/class/net'):
+                        # Skip loopback and virtual interfaces
+                        if iface_name.startswith('lo') or iface_name.startswith('docker') or iface_name.startswith('br-'):
+                            continue
+                        
+                        # Check if it's a wireless interface
+                        is_wifi = False
+                        if 'wlan' in iface_name or 'wlp' in iface_name:
+                            is_wifi = True
+                        else:
+                            # Check using iw
+                            try:
+                                check_result = subprocess.run(
+                                    ["iw", "dev", iface_name, "info"],
+                                    capture_output=True,
+                                    timeout=2,
+                                    text=True
+                                )
+                                if check_result.returncode == 0:
+                                    is_wifi = True
+                            except:
+                                pass
+                        
+                        if is_wifi and iface_name not in interfaces:
+                            interfaces[iface_name] = {
+                                'name': iface_name,
                                 'type': 'wifi',
                                 'state': 'unknown',
                                 'available': True
                             }
+            except Exception as e:
+                logger.debug(f"sys/class/net check failed: {e}")
+            
+            # Now enrich all interfaces with detailed info
+            for iface_name in list(interfaces.keys()):
+                try:
+                    # Get PHY name
+                    phy_name = self.get_phy_name(iface_name)
+                    if phy_name:
+                        interfaces[iface_name]['phy'] = phy_name
+                    
+                    # Get interface state
+                    state_result = subprocess.run(
+                        ["ip", "link", "show", iface_name],
+                        capture_output=True,
+                        timeout=5,
+                        text=True
+                    )
+                    if state_result.returncode == 0:
+                        state = 'DOWN'
+                        if 'state UP' in state_result.stdout or 'UP' in state_result.stdout:
+                            state = 'UP'
+                        interfaces[iface_name]['state'] = state
+                    else:
+                        interfaces[iface_name]['state'] = 'DOWN'
+                        
+                except Exception as e:
+                    logger.debug(f"Could not get full info for {iface_name}: {e}")
+                    # Keep basic info we have
+                    if 'state' not in interfaces[iface_name]:
+                        interfaces[iface_name]['state'] = 'unknown'
                             
         except Exception as e:
             logger.error(f"Error listing interfaces: {e}")
         
+        logger.info(f"Found {len(interfaces)} wireless interfaces: {list(interfaces.keys())}")
         return interfaces
 
     def get_interface_status(self, interface: str) -> Dict:
