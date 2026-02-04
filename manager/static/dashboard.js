@@ -65,9 +65,11 @@ function updateUI(data) {
     // Update Wi-Fi form if not being edited
     const ssidInput = document.getElementById('ssid');
     const passwordInput = document.getElementById('password');
-    if (ssidInput && !document.activeElement === ssidInput) {
+    if (ssidInput && document.activeElement !== ssidInput) {
         ssidInput.value = data.ssid || '';
     }
+    // Don't update password field (security - it's masked anyway)
+    // Password is checked via password_masked field in currentData
 }
 
 // Persona management
@@ -179,10 +181,11 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
         return;
     }
     
-    // Get SSID/password from server config (not form - form may not be saved)
-    // The backend will use saved config if not provided, but we check here for better UX
-    const ssid = document.getElementById('ssid')?.value;
-    const password = document.getElementById('password')?.value;
+    // Get SSID/password from saved server config (not form - form may not reflect saved values)
+    // Use currentData which is refreshed from /status endpoint
+    const ssid = currentData?.ssid || '';
+    // Check if password is configured (password_masked will be non-empty if config exists)
+    const hasPassword = currentData?.password_masked && currentData.password_masked.length > 0;
     
     // For wired personas, no Wi-Fi config needed
     if (personaType === 'wired') {
@@ -190,13 +193,14 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
     } else if (personaType === 'bad') {
         // Bad personas need SSID but not password (they use wrong password)
         if (!ssid) {
-            showMessage('Please configure Wi-Fi SSID first', 'error');
+            showMessage('Please configure Wi-Fi SSID first in the Wi-Fi Config tab', 'error');
             return;
         }
     } else if (personaType === 'good') {
         // Good personas need both SSID and password
-        if (!ssid || !password) {
-            showMessage('Please configure Wi-Fi settings first (SSID and password)', 'error');
+        // Check if config exists (password_masked indicates config was saved)
+        if (!ssid || !hasPassword) {
+            showMessage('Please configure Wi-Fi settings first (SSID and password) in the Wi-Fi Config tab', 'error');
             return;
         }
     }
@@ -208,8 +212,10 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
             body: JSON.stringify({
                 persona_type: personaType,
                 interface: interface,
+                // Backend will use saved config if not provided, but we pass SSID for clarity
                 ssid: personaType !== 'wired' ? ssid : undefined,
-                password: personaType === 'good' ? password : undefined
+                // Password is handled by backend from saved config
+                password: undefined  // Backend reads from config file
             })
         });
         

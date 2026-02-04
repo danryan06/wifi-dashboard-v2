@@ -387,7 +387,7 @@ def api_interfaces():
                         }
             return jsonify({"success": True, "interfaces": interfaces, "note": "Basic mode - Docker unavailable"})
         
-        interfaces = interface_manager.list_available_interfaces()
+        interfaces = interface_manager.list_available_interfaces(include_ethernet=True)
         # Ensure all interfaces have required fields for display
         for iface_name, iface_info in interfaces.items():
             if 'state' not in iface_info:

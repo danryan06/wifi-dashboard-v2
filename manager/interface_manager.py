@@ -240,11 +240,16 @@ class InterfaceManager:
             logger.exception(f"Unexpected error returning interface to host: {e}")
             return False
 
-    def list_available_interfaces(self) -> Dict[str, Dict]:
+    def list_available_interfaces(self, include_ethernet: bool = True) -> Dict[str, Dict]:
         """
-        List all available Wi-Fi interfaces on the host.
+        List all available network interfaces on the host.
         Uses multiple methods to ensure we catch all interfaces.
-        Returns dict mapping interface name to metadata.
+        
+        Args:
+            include_ethernet: If True, also include ethernet interfaces (for wired personas)
+        
+        Returns:
+            dict mapping interface name to metadata.
         """
         interfaces = {}
         
@@ -359,13 +364,54 @@ class InterfaceManager:
             except Exception as e:
                 logger.debug(f"sys/class/net check failed: {e}")
             
+            # Method 4: Add ethernet interfaces if requested (for wired personas)
+            if include_ethernet:
+                try:
+                    ip_result = subprocess.run(
+                        ["ip", "link", "show"],
+                        capture_output=True,
+                        timeout=5,
+                        text=True
+                    )
+                    
+                    for line in ip_result.stdout.split('\n'):
+                        if ':' in line:
+                            parts = line.split(':')
+                            if len(parts) >= 2:
+                                potential_iface = parts[1].strip().split('@')[0]
+                                
+                                # Check if it's an ethernet interface (eth, enp, eno, etc.)
+                                is_ethernet = False
+                                if potential_iface.startswith('eth') or \
+                                   potential_iface.startswith('enp') or \
+                                   potential_iface.startswith('eno') or \
+                                   potential_iface.startswith('ens'):
+                                    is_ethernet = True
+                                
+                                # Skip if already added or if it's a virtual interface
+                                if is_ethernet and potential_iface not in interfaces:
+                                    # Skip loopback, docker, bridge interfaces
+                                    if not potential_iface.startswith('lo') and \
+                                       not potential_iface.startswith('docker') and \
+                                       not potential_iface.startswith('br-') and \
+                                       not potential_iface.startswith('pan'):
+                                        interfaces[potential_iface] = {
+                                            'name': potential_iface,
+                                            'type': 'ethernet',
+                                            'state': 'unknown',
+                                            'available': True
+                                        }
+                except Exception as e:
+                    logger.debug(f"Failed to add ethernet interfaces: {e}")
+            
             # Now enrich all interfaces with detailed info
             for iface_name in list(interfaces.keys()):
                 try:
-                    # Get PHY name
-                    phy_name = self.get_phy_name(iface_name)
-                    if phy_name:
-                        interfaces[iface_name]['phy'] = phy_name
+                    # Get PHY name for wireless interfaces only
+                    if interfaces[iface_name].get('type') == 'wifi':
+                        phy_name = self.get_phy_name(iface_name)
+                        if phy_name:
+                            interfaces[iface_name]['phy'] = phy_name
                     
                     # Get interface state
                     state_result = subprocess.run(
@@ -391,7 +437,12 @@ class InterfaceManager:
         except Exception as e:
             logger.error(f"Error listing interfaces: {e}")
         
-        logger.info(f"Found {len(interfaces)} wireless interfaces: {list(interfaces.keys())}")
+        interface_types = {}
+        for iface, info in interfaces.items():
+            iface_type = info.get('type', 'unknown')
+            interface_types[iface_type] = interface_types.get(iface_type, 0) + 1
+        
+        logger.info(f"Found {len(interfaces)} interfaces: {interface_types}")
         return interfaces
 
     def get_interface_status(self, interface: str) -> Dict:
