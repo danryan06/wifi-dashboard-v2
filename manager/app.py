@@ -14,6 +14,7 @@ import threading
 import psutil
 from .manager_logic import PersonaManager
 from .interface_manager import InterfaceManager
+from .driver_diagnostics import run_diagnostics
 
 # Determine base directory - handle both development and container environments
 if os.path.exists("/app"):
@@ -398,6 +399,17 @@ def api_interfaces():
         return jsonify({"success": True, "interfaces": interfaces})
     except Exception as e:
         logger.exception(f"Error getting interfaces: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/diagnostics")
+def api_diagnostics():
+    """Get driver and interface diagnostics"""
+    try:
+        diagnostics = run_diagnostics()
+        return jsonify({"success": True, "diagnostics": diagnostics})
+    except Exception as e:
+        logger.exception(f"Error running diagnostics: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 

@@ -15,7 +15,7 @@ document.querySelectorAll(".tab").forEach(tab => {
 function switchTab(tabName) {
     document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
     document.querySelector(`[data-tab="${tabName}"]`).classList.add("active");
-    const sections = ["status", "personas", "hardware", "wifi", "logs", "controls"];
+    const sections = ["status", "personas", "hardware", "diagnostics", "wifi", "logs", "controls"];
     sections.forEach(section => {
         const el = document.getElementById(section);
         if (el) el.classList.toggle("hidden", section !== tabName);
@@ -27,6 +27,8 @@ function switchTab(tabName) {
         updateHardwareView();
     } else if (tabName === 'logs') {
         loadCurrentLog();
+    } else if (tabName === 'diagnostics') {
+        refreshDiagnostics();
     }
 }
 
@@ -519,6 +521,138 @@ function updateStatusPill(text, color) {
         pill.innerHTML = text;
         pill.style.backgroundColor = color;
     }
+}
+
+// Diagnostics
+async function refreshDiagnostics() {
+    const content = document.getElementById('diagnostics-content');
+    if (!content) return;
+    
+    try {
+        content.innerHTML = '<div style="text-align: center; padding: 20px;"><span class="spinner"></span> Loading diagnostics...</div>';
+        
+        const response = await fetch('/api/diagnostics');
+        if (!response.ok) throw new Error('Failed to fetch diagnostics');
+        const data = await response.json();
+        
+        if (data.success) {
+            displayDiagnostics(data.diagnostics);
+        } else {
+            content.innerHTML = `<div style="color: var(--error); padding: 20px;">Error: ${data.error || 'Unknown error'}</div>`;
+        }
+    } catch (error) {
+        console.error('Error loading diagnostics:', error);
+        content.innerHTML = `<div style="color: var(--error); padding: 20px;">Error loading diagnostics: ${error.message}</div>`;
+    }
+}
+
+function displayDiagnostics(diag) {
+    const content = document.getElementById('diagnostics-content');
+    if (!content) return;
+    
+    let html = '<div style="display: grid; gap: 24px;">';
+    
+    // Summary
+    html += '<div style="background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px;">';
+    html += '<h3 style="margin-top: 0;">📊 Summary</h3>';
+    html += `<p><strong>USB Devices:</strong> ${diag.summary.total_usb_devices} total, ${diag.summary.wifi_usb_devices} Wi-Fi adapters</p>`;
+    html += `<p><strong>Interfaces Detected:</strong> ${diag.summary.interfaces_detected}</p>`;
+    html += `<p><strong>Drivers Loaded:</strong> ${diag.summary.drivers_loaded}</p>`;
+    html += `<p><strong>Issues Found:</strong> ${diag.summary.issues_found}</p>`;
+    html += `<p><strong>Recommendations:</strong> ${diag.summary.recommendations_count}</p>`;
+    html += '</div>';
+    
+    // USB Wi-Fi Devices
+    if (diag.wifi_usb_devices && diag.wifi_usb_devices.length > 0) {
+        html += '<div style="background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px;">';
+        html += '<h3 style="margin-top: 0;">🔌 USB Wi-Fi Devices</h3>';
+        diag.wifi_usb_devices.forEach(device => {
+            const statusColor = device.driver_loaded && device.has_interface ? 'var(--success)' : 'var(--warning)';
+            const statusIcon = device.driver_loaded && device.has_interface ? '✅' : '⚠️';
+            html += `<div style="margin-bottom: 16px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; border-left: 4px solid ${statusColor};">`;
+            html += `<div style="font-weight: 600; margin-bottom: 8px;">${statusIcon} ${device.device_name}</div>`;
+            html += `<div style="font-size: 0.9em; color: var(--muted); margin-bottom: 4px;">Device ID: ${device.device_id}</div>`;
+            html += `<div style="font-size: 0.9em;">Expected Driver: <code>${device.expected_driver}</code>`;
+            if (device.alt_driver) {
+                html += ` or <code>${device.alt_driver}</code>`;
+            }
+            html += `</div>`;
+            html += `<div style="font-size: 0.9em; margin-top: 4px;">`;
+            html += `Driver Loaded: ${device.driver_loaded ? '✅ Yes' : '❌ No'}`;
+            if (device.driver_name) {
+                html += ` (${device.driver_name})`;
+            }
+            html += ` | Interface: ${device.has_interface ? '✅ Yes' : '❌ No'}`;
+            html += `</div>`;
+            html += '</div>';
+        });
+        html += '</div>';
+    }
+    
+    // Issues
+    if (diag.issues && diag.issues.length > 0) {
+        html += '<div style="background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px;">';
+        html += '<h3 style="margin-top: 0; color: var(--warning);">⚠️ Issues Detected</h3>';
+        diag.issues.forEach(issue => {
+            const severityColor = issue.severity === 'high' ? 'var(--error)' : 'var(--warning)';
+            html += `<div style="margin-bottom: 12px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px; border-left: 4px solid ${severityColor};">`;
+            html += `<div style="font-weight: 600; margin-bottom: 4px;">${issue.device || 'System'}</div>`;
+            html += `<div style="font-size: 0.9em; color: var(--muted);">${issue.message}</div>`;
+            if (issue.expected_driver) {
+                html += `<div style="font-size: 0.85em; margin-top: 4px; color: var(--muted);">Expected driver: <code>${issue.expected_driver}</code></div>`;
+            }
+            html += '</div>';
+        });
+        html += '</div>';
+    }
+    
+    // Recommendations
+    if (diag.recommendations && diag.recommendations.length > 0) {
+        html += '<div style="background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px;">';
+        html += '<h3 style="margin-top: 0; color: var(--info);">💡 Recommendations</h3>';
+        diag.recommendations.forEach(rec => {
+            html += `<div style="margin-bottom: 16px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px;">`;
+            html += `<div style="font-weight: 600; margin-bottom: 8px;">${rec.device || 'System'}</div>`;
+            html += `<div style="font-size: 0.9em; margin-bottom: 8px;">${rec.message}</div>`;
+            if (rec.commands && rec.commands.length > 0) {
+                html += '<div style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; font-family: monospace; font-size: 0.85em; margin-top: 8px;">';
+                rec.commands.forEach(cmd => {
+                    html += `<div style="margin-bottom: 4px;">${cmd}</div>`;
+                });
+                html += '</div>';
+            }
+            if (rec.persistent) {
+                html += `<div style="font-size: 0.85em; color: var(--muted); margin-top: 8px;">To make persistent: <code>${rec.persistent}</code></div>`;
+            }
+            html += '</div>';
+        });
+        html += '</div>';
+    }
+    
+    // Loaded Drivers
+    if (diag.loaded_drivers && diag.loaded_drivers.length > 0) {
+        html += '<div style="background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px;">';
+        html += '<h3 style="margin-top: 0;">📦 Loaded Wi-Fi Drivers</h3>';
+        html += '<div style="display: flex; flex-wrap: wrap; gap: 8px;">';
+        diag.loaded_drivers.forEach(driver => {
+            html += `<span style="background: var(--success); color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.85em;"><code>${driver}</code></span>`;
+        });
+        html += '</div></div>';
+    }
+    
+    // Available Interfaces
+    if (diag.wifi_interfaces && diag.wifi_interfaces.length > 0) {
+        html += '<div style="background: rgba(255,255,255,0.05); padding: 16px; border-radius: 8px;">';
+        html += '<h3 style="margin-top: 0;">📡 Available Wi-Fi Interfaces</h3>';
+        html += '<div style="display: flex; flex-wrap: wrap; gap: 8px;">';
+        diag.wifi_interfaces.forEach(iface => {
+            html += `<span style="background: var(--accent); color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.85em;"><code>${iface}</code></span>`;
+        });
+        html += '</div></div>';
+    }
+    
+    html += '</div>';
+    content.innerHTML = html;
 }
 
 // Initialize

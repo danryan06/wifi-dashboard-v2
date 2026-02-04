@@ -135,6 +135,7 @@
             <div class="tab active" data-tab="status">📊 Status</div>
             <div class="tab" data-tab="personas">👥 Personas</div>
             <div class="tab" data-tab="hardware">🔌 Hardware</div>
+            <div class="tab" data-tab="diagnostics">🔍 Diagnostics</div>
             <div class="tab" data-tab="wifi">📶 Wi-Fi Config</div>
             <div class="tab" data-tab="logs">📋 Logs</div>
             <div class="tab" data-tab="controls">🔧 System</div>
@@ -217,6 +218,22 @@
             <div class="hardware-view" id="hardware-view">
                 <div style="text-align: center; padding: 40px; color: var(--muted);">
                     <span class="spinner"></span> Loading hardware...
+                </div>
+            </div>
+        </div>
+
+        <!-- Diagnostics Tab -->
+        <div id="diagnostics" class="card hidden">
+            <h2>🔍 Driver & Interface Diagnostics</h2>
+            <p style="color: var(--muted); margin-bottom: 24px;">
+                Check USB Wi-Fi devices, loaded drivers, and get recommendations for missing drivers.
+            </p>
+            <div style="margin-bottom: 16px;">
+                <button onclick="refreshDiagnostics()" class="secondary">🔄 Refresh Diagnostics</button>
+            </div>
+            <div id="diagnostics-content">
+                <div style="text-align: center; padding: 40px; color: var(--muted);">
+                    <span class="spinner"></span> Loading diagnostics...
                 </div>
             </div>
         </div>
