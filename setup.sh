@@ -21,12 +21,17 @@ log_step()  { echo -e "${BLUE}[STEP]${NC} $1"; }
 
 # Helper function to use docker compose (plugin) or docker-compose (standalone)
 docker_compose_cmd() {
-    if docker compose version &>/dev/null; then
+    # Try docker compose plugin first (newer method)
+    if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
         docker compose "$@"
-    elif command -v docker-compose &>/dev/null; then
+        return $?
+    # Fall back to standalone docker-compose
+    elif command -v docker-compose >/dev/null 2>&1; then
         docker-compose "$@"
+        return $?
     else
         log_error "Neither 'docker compose' nor 'docker-compose' is available"
+        log_error "Please install Docker Compose plugin or standalone version"
         return 1
     fi
 }
