@@ -64,8 +64,17 @@ EOF
     
     # Start wpa_supplicant with nl80211 driver
     # -B = background, -D = driver, -i = interface, -c = config file, -dd = debug output
+    log "Starting wpa_supplicant..."
     if wpa_supplicant -B -Dnl80211 -i "$INTERFACE" -c "$WPA_CONF" -dd >> "$LOG_FILE" 2>&1; then
-        log "wpa_supplicant started"
+        log "wpa_supplicant started successfully"
+        sleep 2  # Give wpa_supplicant time to initialize
+        
+        # Use wpa_cli to actively connect (more reliable than waiting)
+        if command -v wpa_cli >/dev/null 2>&1; then
+            log "Triggering connection via wpa_cli..."
+            wpa_cli -i "$INTERFACE" reconnect 2>&1 | tee -a "$LOG_FILE" || true
+            wpa_cli -i "$INTERFACE" select_network 0 2>&1 | tee -a "$LOG_FILE" || true
+        fi
     else
         log "ERROR: Failed to start wpa_supplicant"
         # Check for common errors
@@ -74,7 +83,11 @@ EOF
         fi
         if ! iw dev "$INTERFACE" info >/dev/null 2>&1; then
             log "ERROR: Interface $INTERFACE not found or not accessible"
+            iw dev "$INTERFACE" info 2>&1 | tee -a "$LOG_FILE" || true
         fi
+        # Show last few lines of log for debugging
+        log "Last 10 lines of wpa_supplicant output:"
+        tail -10 "$LOG_FILE" | tee -a "$LOG_FILE" || true
         return 1
     fi
     
@@ -93,13 +106,24 @@ EOF
         # Method 2: Check wpa_cli status (more reliable)
         if command -v wpa_cli >/dev/null 2>&1; then
             wpa_status=$(wpa_cli -i "$INTERFACE" status 2>/dev/null)
-            if echo "$wpa_status" | grep -q "wpa_state=COMPLETED"; then
-                connected=true
-                log "Connection confirmed via wpa_cli"
-            fi
+            wpa_state=$(echo "$wpa_status" | grep "^wpa_state=" | cut -d= -f2)
+            
             # Log wpa_cli status every 5 seconds for debugging
-            if [ $((wait_count % 5)) -eq 0 ]; then
-                log "wpa_cli status: $(echo "$wpa_status" | grep -E "wpa_state|ssid|ip_address" | tr '\n' ' ')"
+            if [ $((wait_count % 5)) -eq 0 ] || [ "$wpa_state" != "COMPLETED" ]; then
+                log "wpa_cli status: wpa_state=$wpa_state, $(echo "$wpa_status" | grep -E "ssid|bssid|ip_address|address" | tr '\n' ' ')"
+            fi
+            
+            if [ "$wpa_state" = "COMPLETED" ]; then
+                connected=true
+                log "Connection confirmed via wpa_cli (wpa_state=COMPLETED)"
+            elif [ "$wpa_state" = "ASSOCIATING" ] || [ "$wpa_state" = "ASSOCIATED" ] || [ "$wpa_state" = "4WAY_HANDSHAKE" ]; then
+                log "Connection in progress: wpa_state=$wpa_state"
+            elif [ "$wpa_state" = "DISCONNECTED" ] || [ "$wpa_state" = "SCANNING" ]; then
+                # Try to trigger connection again
+                if [ $((wait_count % 10)) -eq 0 ]; then
+                    log "Still disconnected, triggering reconnect..."
+                    wpa_cli -i "$INTERFACE" reconnect 2>&1 | tee -a "$LOG_FILE" || true
+                fi
             fi
         fi
         
@@ -124,14 +148,22 @@ EOF
         if [ $wait_count -ge $max_wait ]; then
             log "ERROR: Failed to connect within ${max_wait}s"
             # Show detailed status for debugging
+            log "=== Connection Failure Debug Info ==="
             log "Interface status:"
-            iw dev "$INTERFACE" link 2>/dev/null >> "$LOG_FILE" || log "iw dev failed"
+            iw dev "$INTERFACE" link 2>&1 | tee -a "$LOG_FILE" || log "iw dev failed"
+            log "Interface info:"
+            iw dev "$INTERFACE" info 2>&1 | tee -a "$LOG_FILE" || true
             if command -v wpa_cli >/dev/null 2>&1; then
                 log "wpa_cli full status:"
-                wpa_cli -i "$INTERFACE" status 2>/dev/null >> "$LOG_FILE" || true
+                wpa_cli -i "$INTERFACE" status 2>&1 | tee -a "$LOG_FILE" || true
+                log "wpa_cli scan results:"
+                wpa_cli -i "$INTERFACE" scan_results 2>&1 | head -20 | tee -a "$LOG_FILE" || true
             fi
             log "Interface IP info:"
-            ip addr show "$INTERFACE" 2>/dev/null >> "$LOG_FILE" || true
+            ip addr show "$INTERFACE" 2>&1 | tee -a "$LOG_FILE" || true
+            log "Last 30 lines of wpa_supplicant debug output:"
+            tail -30 "$LOG_FILE" | grep -E "wpa_supplicant|CTRL|WPA|auth|assoc|4-way|EAPOL" | tail -20 | tee -a "$LOG_FILE" || true
+            log "=== End Debug Info ==="
             return 1
         fi
         sleep 1
