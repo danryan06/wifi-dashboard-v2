@@ -25,6 +25,18 @@ log "SSID: $SSID, Traffic: $TRAFFIC_INTENSITY, Roaming: $ROAMING_ENABLED"
 connect_wifi() {
     log "Connecting to SSID: $SSID"
     
+    # Ensure interface is up and ready
+    ip link set "$INTERFACE" up 2>/dev/null || true
+    sleep 1
+    
+    # Scan for networks to ensure interface is working
+    log "Scanning for networks..."
+    if iw dev "$INTERFACE" scan >/dev/null 2>&1; then
+        log "Scan successful, interface is ready"
+    else
+        log "WARNING: Scan failed, but continuing..."
+    fi
+    
     # Create wpa_supplicant config
     WPA_CONF="/tmp/wpa_supplicant_${INTERFACE}.conf"
     cat > "$WPA_CONF" <<EOF
@@ -46,6 +58,10 @@ EOF
     pkill -f "wpa_supplicant.*$INTERFACE" || true
     sleep 1
     
+    # Ensure ctrl_interface directory exists
+    mkdir -p /var/run/wpa_supplicant
+    chmod 755 /var/run/wpa_supplicant
+    
     # Start wpa_supplicant with nl80211 driver
     # -B = background, -D = driver, -i = interface, -c = config file, -dd = debug output
     if wpa_supplicant -B -Dnl80211 -i "$INTERFACE" -c "$WPA_CONF" -dd >> "$LOG_FILE" 2>&1; then
@@ -66,8 +82,34 @@ EOF
     max_wait=30
     wait_count=0
     while true; do
-        # Check if connected
-        if iw dev "$INTERFACE" link 2>/dev/null | grep -q "Connected"; then
+        # Check connection status using multiple methods
+        connected=false
+        
+        # Method 1: Check iw dev link output
+        if iw dev "$INTERFACE" link 2>/dev/null | grep -qE "Connected|SSID"; then
+            connected=true
+        fi
+        
+        # Method 2: Check wpa_cli status (more reliable)
+        if command -v wpa_cli >/dev/null 2>&1; then
+            wpa_status=$(wpa_cli -i "$INTERFACE" status 2>/dev/null)
+            if echo "$wpa_status" | grep -q "wpa_state=COMPLETED"; then
+                connected=true
+                log "Connection confirmed via wpa_cli"
+            fi
+            # Log wpa_cli status every 5 seconds for debugging
+            if [ $((wait_count % 5)) -eq 0 ]; then
+                log "wpa_cli status: $(echo "$wpa_status" | grep -E "wpa_state|ssid|ip_address" | tr '\n' ' ')"
+            fi
+        fi
+        
+        # Method 3: Check if we have an IP address
+        if ip addr show "$INTERFACE" 2>/dev/null | grep -q "inet "; then
+            connected=true
+            log "IP address assigned, connection confirmed"
+        fi
+        
+        if [ "$connected" = true ]; then
             break
         fi
         
@@ -81,10 +123,15 @@ EOF
         
         if [ $wait_count -ge $max_wait ]; then
             log "ERROR: Failed to connect within ${max_wait}s"
-            # Show wpa_supplicant status for debugging
+            # Show detailed status for debugging
+            log "Interface status:"
+            iw dev "$INTERFACE" link 2>/dev/null >> "$LOG_FILE" || log "iw dev failed"
             if command -v wpa_cli >/dev/null 2>&1; then
+                log "wpa_cli full status:"
                 wpa_cli -i "$INTERFACE" status 2>/dev/null >> "$LOG_FILE" || true
             fi
+            log "Interface IP info:"
+            ip addr show "$INTERFACE" 2>/dev/null >> "$LOG_FILE" || true
             return 1
         fi
         sleep 1
