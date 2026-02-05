@@ -28,31 +28,63 @@ connect_wifi() {
     # Create wpa_supplicant config
     WPA_CONF="/tmp/wpa_supplicant_${INTERFACE}.conf"
     cat > "$WPA_CONF" <<EOF
+ctrl_interface=/var/run/wpa_supplicant
+ctrl_interface_group=0
+update_config=1
+
 network={
     ssid="$SSID"
     psk="$PASSWORD"
     key_mgmt=WPA-PSK
+    scan_ssid=1
 }
 EOF
+    chmod 600 "$WPA_CONF"
+    log "Created wpa_supplicant config: $WPA_CONF"
     
     # Kill any existing wpa_supplicant for this interface
     pkill -f "wpa_supplicant.*$INTERFACE" || true
     sleep 1
     
-    # Start wpa_supplicant
-    if wpa_supplicant -B -i "$INTERFACE" -c "$WPA_CONF" -f "$LOG_FILE"; then
+    # Start wpa_supplicant with nl80211 driver
+    # -B = background, -D = driver, -i = interface, -c = config file, -dd = debug output
+    if wpa_supplicant -B -Dnl80211 -i "$INTERFACE" -c "$WPA_CONF" -dd >> "$LOG_FILE" 2>&1; then
         log "wpa_supplicant started"
     else
         log "ERROR: Failed to start wpa_supplicant"
+        # Check for common errors
+        if [ ! -f "$WPA_CONF" ]; then
+            log "ERROR: wpa_supplicant config file not found: $WPA_CONF"
+        fi
+        if ! iw dev "$INTERFACE" info >/dev/null 2>&1; then
+            log "ERROR: Interface $INTERFACE not found or not accessible"
+        fi
         return 1
     fi
     
     # Wait for connection
     max_wait=30
     wait_count=0
-    while ! iw dev "$INTERFACE" link | grep -q "Connected"; do
+    while true; do
+        # Check if connected
+        if iw dev "$INTERFACE" link 2>/dev/null | grep -q "Connected"; then
+            break
+        fi
+        
+        # Check if wpa_supplicant is still running
+        if ! pgrep -f "wpa_supplicant.*$INTERFACE" >/dev/null; then
+            log "ERROR: wpa_supplicant process died"
+            # Check last few lines of log for errors
+            tail -20 "$LOG_FILE" | grep -i "error\|fail" | tail -5 >> "$LOG_FILE" || true
+            return 1
+        fi
+        
         if [ $wait_count -ge $max_wait ]; then
             log "ERROR: Failed to connect within ${max_wait}s"
+            # Show wpa_supplicant status for debugging
+            if command -v wpa_cli >/dev/null 2>&1; then
+                wpa_cli -i "$INTERFACE" status 2>/dev/null >> "$LOG_FILE" || true
+            fi
             return 1
         fi
         sleep 1
