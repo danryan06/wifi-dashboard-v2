@@ -236,6 +236,110 @@ install_docker_compose() {
     fi
 }
 
+load_usb_wifi_drivers() {
+    log_step "Detecting and loading USB Wi-Fi drivers..."
+    
+    # Common USB Wi-Fi device IDs and their drivers
+    # Format: vendor:product -> driver
+    declare -A USB_WIFI_DRIVERS=(
+        ['7392:b811']='rtl8xxxu'  # Edimax N150 (RTL8188EU)
+        ['0bda:8176']='rtl8192cu'
+        ['0bda:8178']='rtl8192cu'
+        ['0bda:8179']='rtl8192cu'
+        ['0bda:818b']='rtl8192cu'
+        ['0bda:8187']='rtl8192cu'
+        ['0bda:8812']='rtl8812au'
+        ['0bda:8813']='rtl8812au'
+        ['0bda:8821']='rtl8821au'
+        ['0bda:0821']='rtl8xxxu'
+        ['0bda:0823']='rtl8xxxu'
+        ['148f:5370']='rt2800usb'  # Ralink RT5370
+        ['148f:5572']='rt2800usb'
+        ['148f:7601']='mt7601u'    # MediaTek MT7601U
+        ['0cf3:9271']='ath9k_htc'   # Atheros AR9271
+        ['0cf3:7015']='ath9k_htc'
+    )
+    
+    # Check if lsusb is available
+    if ! command -v lsusb &>/dev/null; then
+        log_warn "lsusb not found, skipping USB Wi-Fi driver detection"
+        return 0
+    fi
+    
+    # Get list of USB devices
+    local usb_devices
+    usb_devices=$(lsusb 2>/dev/null || echo "")
+    
+    if [ -z "$usb_devices" ]; then
+        log_info "No USB devices detected (or lsusb failed)"
+        return 0
+    fi
+    
+    local drivers_loaded=0
+    local drivers_to_persist=()
+    
+    # Check each USB device
+    while IFS= read -r line; do
+        # Extract vendor:product ID from lsusb output
+        # Format: "Bus 001 Device 003: ID 7392:b811 Edimax Technology Co., Ltd"
+        if [[ $line =~ ID\ ([0-9a-f]{4}):([0-9a-f]{4}) ]]; then
+            local vendor_id="${BASH_REMATCH[1]}"
+            local product_id="${BASH_REMATCH[2]}"
+            local device_id="${vendor_id}:${product_id}"
+            
+            # Check if this is a known Wi-Fi device
+            if [[ -n "${USB_WIFI_DRIVERS[$device_id]}" ]]; then
+                local driver="${USB_WIFI_DRIVERS[$device_id]}"
+                local device_name
+                device_name=$(echo "$line" | sed 's/.*ID [0-9a-f:]* //')
+                
+                log_info "Found USB Wi-Fi device: $device_name (ID: $device_id)"
+                
+                # Check if driver module exists
+                if modinfo "$driver" &>/dev/null; then
+                    # Check if driver is already loaded
+                    if lsmod | grep -q "^${driver} "; then
+                        log_info "  Driver $driver already loaded"
+                    else
+                        log_info "  Loading driver: $driver"
+                        if modprobe "$driver" 2>/dev/null; then
+                            log_info "  ✅ Successfully loaded $driver"
+                            drivers_loaded=$((drivers_loaded + 1))
+                            drivers_to_persist+=("$driver")
+                        else
+                            log_warn "  ⚠️ Failed to load $driver (may need firmware)"
+                        fi
+                    fi
+                else
+                    log_warn "  ⚠️ Driver module $driver not found (may need installation)"
+                fi
+            fi
+        fi
+    done <<< "$usb_devices"
+    
+    # Make drivers persistent by adding to /etc/modules
+    if [ ${#drivers_to_persist[@]} -gt 0 ]; then
+        log_info "Making drivers persistent..."
+        for driver in "${drivers_to_persist[@]}"; do
+            # Check if already in /etc/modules
+            if ! grep -q "^${driver}$" /etc/modules 2>/dev/null; then
+                echo "$driver" >> /etc/modules
+                log_info "  Added $driver to /etc/modules"
+            fi
+        done
+    fi
+    
+    if [ $drivers_loaded -gt 0 ]; then
+        log_info "✅ Loaded $drivers_loaded USB Wi-Fi driver(s)"
+        # Wait a moment for interfaces to appear
+        sleep 2
+        log_info "Available Wi-Fi interfaces:"
+        iw dev 2>/dev/null | grep "Interface" | sed 's/^/  /' || log_info "  (none detected yet)"
+    else
+        log_info "No USB Wi-Fi drivers needed to be loaded"
+    fi
+}
+
 cleanup_old_installation() {
     log_step "Cleaning up old installations..."
     
@@ -575,6 +679,7 @@ main() {
     check_prerequisites
     install_docker
     install_docker_compose
+    load_usb_wifi_drivers
     cleanup_old_installation
     setup_directories
     download_project_files
