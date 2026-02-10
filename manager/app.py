@@ -142,7 +142,7 @@ def index():
         if not os.path.exists(template_path):
             logger.error(f"Template not found at: {template_path}")
             return f"<h1>Error</h1><p>Template not found at: {template_path}</p><p>Template folder: {app.template_folder}</p>", 500
-        return render_template("dashboard.html", ssid=ssid)
+        return render_template("dashboard.html", ssid=ssid, version=VERSION)
     except Exception as e:
         logger.exception(f"Error in index route: {e}")
         return f"<h1>Error</h1><p>Failed to load dashboard: {str(e)}</p><pre>{traceback.format_exc()}</pre>", 500
