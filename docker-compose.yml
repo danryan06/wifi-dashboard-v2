@@ -1,5 +1,6 @@
 services:
   manager:
+    image: wifi-dashboard-manager:latest
     build:
       context: .
       dockerfile: Dockerfile.manager

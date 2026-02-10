@@ -624,7 +624,7 @@ start_manager() {
     
     # Start with docker compose
     log_info "Starting manager container..."
-    docker_compose_cmd up -d manager
+    docker_compose_cmd up -d --force-recreate manager
     
     # Wait for manager to be ready
     log_info "Waiting for manager to start..."
