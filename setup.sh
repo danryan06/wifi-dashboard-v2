@@ -10,21 +10,27 @@ PI_HOME="/home/$PI_USER"
 
 # Get version from VERSION file (download it first if not available)
 get_version() {
-    local version_file
+    local version="2.0.0"  # Default fallback
+    
     # Try to get version from local VERSION file first
     if [[ -f "VERSION" ]]; then
-        cat "VERSION" 2>/dev/null | head -1 | tr -d '\n' || echo "2.0.0"
+        version=$(cat "VERSION" 2>/dev/null | head -1 | tr -d '\n\r ' || echo "2.0.0")
     # Try to get from downloaded VERSION file
     elif [[ -f "$PI_HOME/wifi_dashboard_v2/VERSION" ]]; then
-        cat "$PI_HOME/wifi_dashboard_v2/VERSION" 2>/dev/null | head -1 | tr -d '\n' || echo "2.0.0"
-    # Try to download it from repo
+        version=$(cat "$PI_HOME/wifi_dashboard_v2/VERSION" 2>/dev/null | head -1 | tr -d '\n\r ' || echo "2.0.0")
+    # Try to download it from repo (early download for banner display)
     else
         local temp_version
-        temp_version=$(curl -sSL "${REPO_URL}/VERSION" 2>/dev/null | head -1 | tr -d '\n' || echo "2.0.0")
-        echo "$temp_version"
+        temp_version=$(curl -sSL "${REPO_URL}/VERSION" 2>/dev/null | head -1 | tr -d '\n\r ' || echo "")
+        if [[ -n "$temp_version" ]]; then
+            version="$temp_version"
+        fi
     fi
+    
+    echo "$version"
 }
 
+# Get version early (before banner) - will try to download if needed
 VERSION=$(get_version)
 
 RED='\033[0;31m'
