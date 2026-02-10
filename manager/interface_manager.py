@@ -102,10 +102,16 @@ class InterfaceManager:
 
             logger.info(f"Moving {interface} to container {container_name} (PID: {pid})")
 
-            # Get phy name for wireless interfaces
-            phy_name = self.get_phy_name(interface)
-            if not phy_name:
-                return False, f"Could not determine phy name for {interface}"
+            # Check if this is a wireless or ethernet interface
+            is_wireless = False
+            try:
+                # Try to get PHY name - if this works, it's a wireless interface
+                phy_name = self.get_phy_name(interface)
+                if phy_name:
+                    is_wireless = True
+            except:
+                # If we can't get PHY, it's likely an ethernet interface
+                is_wireless = False
 
             # 1. Bring the interface down on the host
             try:
@@ -118,19 +124,35 @@ class InterfaceManager:
             except subprocess.CalledProcessError as e:
                 logger.warning(f"Interface {interface} may already be down: {e}")
 
-            # 2. Move the interface to the container's PID namespace using iw
-            # This is the critical step - moving the wireless PHY into the container
-            try:
-                subprocess.run(
-                    ["iw", "phy", phy_name, "set", "netns", str(pid)],
-                    check=True,
-                    timeout=10,
-                    capture_output=True
-                )
-                logger.info(f"Successfully moved {interface} (phy: {phy_name}) to container namespace")
-            except subprocess.CalledProcessError as e:
-                error_msg = e.stderr.decode() if e.stderr else str(e)
-                return False, f"Failed to move interface to container namespace: {error_msg}"
+            # 2. Move the interface to the container's namespace
+            if is_wireless:
+                # For wireless interfaces, use iw to move the PHY
+                if not phy_name:
+                    return False, f"Could not determine phy name for {interface}"
+                try:
+                    subprocess.run(
+                        ["iw", "phy", phy_name, "set", "netns", str(pid)],
+                        check=True,
+                        timeout=10,
+                        capture_output=True
+                    )
+                    logger.info(f"Successfully moved wireless interface {interface} (phy: {phy_name}) to container namespace")
+                except subprocess.CalledProcessError as e:
+                    error_msg = e.stderr.decode() if e.stderr else str(e)
+                    return False, f"Failed to move wireless interface to container namespace: {error_msg}"
+            else:
+                # For ethernet interfaces, use ip link to move directly
+                try:
+                    subprocess.run(
+                        ["ip", "link", "set", interface, "netns", str(pid)],
+                        check=True,
+                        timeout=10,
+                        capture_output=True
+                    )
+                    logger.info(f"Successfully moved ethernet interface {interface} to container namespace")
+                except subprocess.CalledProcessError as e:
+                    error_msg = e.stderr.decode() if e.stderr else str(e)
+                    return False, f"Failed to move ethernet interface to container namespace: {error_msg}"
 
             # 3. Wait a moment for the interface to appear in the container
             time.sleep(0.5)
