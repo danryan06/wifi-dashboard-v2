@@ -42,6 +42,8 @@ connect_wifi() {
     
     # Ensure interface is up and ready
     ip link set "$INTERFACE" up 2>/dev/null || true
+    # Realtek USB adapters are often unstable with power save enabled.
+    iw dev "$INTERFACE" set power_save off 2>/dev/null || true
     sleep 1
     
     # Scan for networks to ensure interface is working
@@ -189,7 +191,9 @@ EOF
     
     # Request DHCP
     log "Requesting DHCP lease"
-    dhcpcd "$INTERFACE" || dhclient "$INTERFACE" || log "WARNING: DHCP may have failed"
+    # Clean up any stale dhcpcd state for this interface before requesting a lease.
+    dhcpcd -x "$INTERFACE" 2>/dev/null || true
+    timeout 30 dhcpcd -w "$INTERFACE" || log "WARNING: DHCP may have failed"
     
     sleep 3
     
@@ -250,8 +254,8 @@ while true; do
                 missed_checks=0
             else
                 missed_checks=$((missed_checks + 1))
-                log "Connection check missed ($missed_checks/3)"
-                if [ "$missed_checks" -ge 3 ]; then
+                log "Connection check missed ($missed_checks/6)"
+                if [ "$missed_checks" -ge 6 ]; then
                     break
                 fi
             fi
