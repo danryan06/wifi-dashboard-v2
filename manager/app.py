@@ -214,6 +214,7 @@ def status():
                 "ip_address": ip_address,
                 "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             },
+            "version": VERSION,
             "success": True
         })
     except Exception as e:
