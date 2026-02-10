@@ -42,7 +42,8 @@ EXPOSE 5000
 
 # Create a startup script that checks Docker access
 RUN echo '#!/bin/bash\n\
-echo "Starting Wi-Fi Dashboard Manager v2.0"\n\
+VERSION=$(cat /app/VERSION 2>/dev/null || echo "2.0.0")\n\
+echo "Starting Wi-Fi Dashboard Manager v${VERSION}"\n\
 echo "Checking Docker socket access..."\n\
 if [ -S /var/run/docker.sock ]; then\n\
     echo "Docker socket found"\n\
