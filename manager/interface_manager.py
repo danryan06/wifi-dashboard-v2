@@ -219,7 +219,61 @@ class InterfaceManager:
         try:
             logger.info(f"Returning {interface} to host namespace from PID {container_pid}")
             
-            # Move interface back to host namespace (PID 1)
+            # Check if this is a wireless or ethernet interface
+            is_wireless = False
+            try:
+                # Try to get PHY name from inside container
+                result = subprocess.run(
+                    ["nsenter", "-t", str(container_pid), "-n", "iw", "dev", interface, "info"],
+                    capture_output=True,
+                    timeout=5,
+                    text=True
+                )
+                if result.returncode == 0:
+                    is_wireless = True
+            except:
+                pass
+            
+            if is_wireless:
+                # For wireless, try to get PHY and use iw
+                try:
+                    phy_name = None
+                    result = subprocess.run(
+                        ["nsenter", "-t", str(container_pid), "-n", "iw", "dev", interface, "info"],
+                        capture_output=True,
+                        timeout=5,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        for line in result.stdout.split('\n'):
+                            if "wiphy" in line:
+                                parts = line.strip().split()
+                                if len(parts) >= 2:
+                                    phy_name = f"phy{parts[1]}"
+                                    break
+                    
+                    if phy_name:
+                        subprocess.run(
+                            ["nsenter", "-t", str(container_pid), "-n",
+                             "iw", "phy", phy_name, "set", "netns", "1"],
+                            check=True,
+                            timeout=10,
+                            capture_output=True
+                        )
+                        logger.info(f"Returned wireless interface {interface} (phy: {phy_name}) to host")
+                        # Bring it up on host
+                        time.sleep(0.5)
+                        subprocess.run(
+                            ["ip", "link", "set", interface, "up"],
+                            check=False,
+                            timeout=5,
+                            capture_output=True
+                        )
+                        return True
+                except Exception as e:
+                    logger.warning(f"Failed to return wireless interface using iw: {e}, trying ip link")
+            
+            # For ethernet or as fallback, use ip link
             subprocess.run(
                 ["nsenter", "-t", str(container_pid), "-n", 
                  "ip", "link", "set", interface, "netns", "1"],
