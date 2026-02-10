@@ -42,6 +42,13 @@ async function refreshData() {
         currentData = await response.json();
         updateUI(currentData);
         updateStatusPill('✅ Connected', 'var(--success)');
+        // Update version display
+        if (currentData.version) {
+            const versionEl = document.getElementById('version-display');
+            if (versionEl) {
+                versionEl.textContent = `v${currentData.version}`;
+            }
+        }
     } catch (error) {
         console.error('Error refreshing data:', error);
         updateStatusPill('❌ Connection Error', 'var(--error)');

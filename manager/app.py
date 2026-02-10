@@ -24,6 +24,16 @@ else:
     # Running locally
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Load version
+VERSION_FILE = os.path.join(BASE_DIR, "VERSION")
+VERSION = "2.0.0"  # Default fallback
+if os.path.exists(VERSION_FILE):
+    try:
+        with open(VERSION_FILE, 'r') as f:
+            VERSION = f.read().strip()
+    except:
+        pass
+
 # Configure Flask with explicit template and static folders
 template_dir = os.path.join(BASE_DIR, "templates")
 static_dir = os.path.join(BASE_DIR, "manager", "static")
@@ -156,6 +166,11 @@ def static_files(filename):
         logger.exception(f"Error serving static file {filename}: {e}")
         return f"Error: {str(e)}", 500
 
+
+@app.route("/api/version")
+def api_version():
+    """Get current version"""
+    return jsonify({"version": VERSION})
 
 @app.route("/status")
 def status():
@@ -508,7 +523,7 @@ def debug_info():
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 if __name__ == "__main__":
-    logger.info("Wi-Fi Dashboard Manager v2.0 starting")
+    logger.info(f"Wi-Fi Dashboard Manager v{VERSION} starting")
     logger.info(f"BASE_DIR: {BASE_DIR}")
     logger.info(f"Template dir: {template_dir}")
     logger.info(f"Static dir: {static_dir}")

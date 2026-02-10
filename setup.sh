@@ -525,6 +525,7 @@ download_project_files() {
     download_with_retry "${REPO_URL}/Dockerfile.persona" "Dockerfile.persona" || exit 1
     download_with_retry "${REPO_URL}/Dockerfile.manager" "Dockerfile.manager" || exit 1
     download_with_retry "${REPO_URL}/docker-compose.yml" "docker-compose.yml" || exit 1
+    download_with_retry "${REPO_URL}/VERSION" "VERSION" || log_warn "Failed to download VERSION file"
     
     # Download persona files
     log_info "  Downloading persona scripts..."
