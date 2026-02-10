@@ -470,6 +470,16 @@ class PersonaManager:
             
             for interface in interfaces_to_remove:
                 del self.state['interfaces'][interface]
+
+            # Remove exited/dead persona containers to keep Docker state clean across reboots.
+            for container in all_containers:
+                try:
+                    container.reload()
+                    if container.status != 'running':
+                        logger.info(f"Removing non-running persona container: {container.name} (status={container.status})")
+                        container.remove(force=True)
+                except Exception as e:
+                    logger.debug(f"Could not remove non-running container {container.name}: {e}")
             
             if personas_to_remove or interfaces_to_remove:
                 self._save_state()
@@ -479,7 +489,7 @@ class PersonaManager:
             logger.warning(f"Error cleaning up stale state: {e}")
 
     def list_personas(self) -> List[Dict]:
-        """List all running persona containers."""
+        """List running persona containers only."""
         # Clean up stale state first
         self._cleanup_stale_state()
         
@@ -489,8 +499,8 @@ class PersonaManager:
             return []  # Return empty list if Docker unavailable
         
         try:
-            # Get all containers with our naming pattern
-            all_containers = self.client.containers.list(all=True, filters={'name': 'persona-'})
+            # Get only running containers with our naming pattern
+            all_containers = self.client.containers.list(filters={'name': 'persona-'})
             
             for container in all_containers:
                 try:
