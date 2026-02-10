@@ -8,6 +8,25 @@ REPO_URL="${REPO_URL:-https://raw.githubusercontent.com/danryan06/wifi-dashboard
 PI_USER="${PI_USER:-$(getent passwd 1000 | cut -d: -f1 2>/dev/null || echo 'pi')}"
 PI_HOME="/home/$PI_USER"
 
+# Get version from VERSION file (download it first if not available)
+get_version() {
+    local version_file
+    # Try to get version from local VERSION file first
+    if [[ -f "VERSION" ]]; then
+        cat "VERSION" 2>/dev/null | head -1 | tr -d '\n' || echo "2.0.0"
+    # Try to get from downloaded VERSION file
+    elif [[ -f "$PI_HOME/wifi_dashboard_v2/VERSION" ]]; then
+        cat "$PI_HOME/wifi_dashboard_v2/VERSION" 2>/dev/null | head -1 | tr -d '\n' || echo "2.0.0"
+    # Try to download it from repo
+    else
+        local temp_version
+        temp_version=$(curl -sSL "${REPO_URL}/VERSION" 2>/dev/null | head -1 | tr -d '\n' || echo "2.0.0")
+        echo "$temp_version"
+    fi
+}
+
+VERSION=$(get_version)
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
