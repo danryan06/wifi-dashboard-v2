@@ -567,6 +567,7 @@ download_project_files() {
     download_with_retry "${REPO_URL}/manager/app.py" "manager/app.py" || exit 1
     download_with_retry "${REPO_URL}/manager/manager_logic.py" "manager/manager_logic.py" || exit 1
     download_with_retry "${REPO_URL}/manager/interface_manager.py" "manager/interface_manager.py" || exit 1
+    download_with_retry "${REPO_URL}/manager/driver_diagnostics.py" "manager/driver_diagnostics.py" || exit 1
     download_with_retry "${REPO_URL}/manager/__init__.py" "manager/__init__.py" || exit 1
     
     # Download static files
