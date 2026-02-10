@@ -404,6 +404,49 @@ class InterfaceManager:
                 except Exception as e:
                     logger.debug(f"Failed to add ethernet interfaces: {e}")
             
+            # Filter out interfaces we don't want to show
+            interfaces_to_remove = []
+            for iface_name in list(interfaces.keys()):
+                # Skip monitor interfaces (mon0, mon1, etc.)
+                if iface_name.startswith('mon'):
+                    interfaces_to_remove.append(iface_name)
+                    continue
+                
+                # Skip container interface names (wlan_sim is the standard name inside containers)
+                if iface_name == 'wlan_sim':
+                    interfaces_to_remove.append(iface_name)
+                    continue
+                
+                # Check if interface is in a container namespace (not on host)
+                # If we can't get info about it from the host, it's probably in a container
+                try:
+                    result = subprocess.run(
+                        ["iw", "dev", iface_name, "info"],
+                        capture_output=True,
+                        timeout=2,
+                        text=True
+                    )
+                    # If iw fails, it might be in a container - but don't remove yet,
+                    # let's check with ip link instead
+                    if result.returncode != 0:
+                        ip_result = subprocess.run(
+                            ["ip", "link", "show", iface_name],
+                            capture_output=True,
+                            timeout=2,
+                            text=True
+                        )
+                        # If both fail, interface doesn't exist on host (might be in container)
+                        if ip_result.returncode != 0:
+                            # Don't remove - might just be down, let it through
+                            pass
+                except:
+                    pass  # Keep the interface if we can't check
+            
+            # Remove filtered interfaces
+            for iface_name in interfaces_to_remove:
+                interfaces.pop(iface_name, None)
+                logger.debug(f"Filtered out interface: {iface_name}")
+            
             # Now enrich all interfaces with detailed info
             for iface_name in list(interfaces.keys()):
                 try:
