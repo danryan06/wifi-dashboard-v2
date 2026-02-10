@@ -14,7 +14,30 @@ import threading
 import psutil
 from .manager_logic import PersonaManager
 from .interface_manager import InterfaceManager
-from .driver_diagnostics import run_diagnostics
+
+# Diagnostics module is optional at runtime: if missing, the manager should still boot.
+_diagnostics_import_error = None
+try:
+    from .driver_diagnostics import run_diagnostics
+except Exception as e:
+    _diagnostics_import_error = str(e)
+
+    def run_diagnostics():
+        return {
+            "summary": {
+                "issues_found": 1,
+                "recommendations_count": 1,
+            },
+            "issues": [{
+                "type": "diagnostics_module_missing",
+                "severity": "high",
+                "message": f"Diagnostics module unavailable: {_diagnostics_import_error}",
+            }],
+            "recommendations": [{
+                "type": "reinstall_manager",
+                "message": "Rebuild manager image or reinstall to restore diagnostics module.",
+            }],
+        }
 
 # Determine base directory - handle both development and container environments
 if os.path.exists("/app"):
@@ -66,6 +89,8 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+if _diagnostics_import_error:
+    logger.warning(f"Diagnostics module unavailable at startup: {_diagnostics_import_error}")
 
 # Initialize managers with error handling (lazy initialization)
 persona_manager = None
