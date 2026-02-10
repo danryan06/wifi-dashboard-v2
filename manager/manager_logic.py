@@ -224,10 +224,12 @@ class PersonaManager:
             time.sleep(2)
 
             # Move interface into container
+            # For wired personas, use 'eth_sim' as the target name, otherwise 'wlan_sim'
+            target_name = 'eth_sim' if persona_type == 'wired' else 'wlan_sim'
             success, msg = self.interface_manager.move_to_container(
                 interface=interface,
                 container_name=container_name,
-                target_name='wlan_sim'
+                target_name=target_name
             )
 
             if not success:

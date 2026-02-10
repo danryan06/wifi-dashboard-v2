@@ -4,6 +4,7 @@
 
 set -euo pipefail
 
+# Default interface name - will be wlan_sim for Wi-Fi, eth_sim for wired
 INTERFACE="${INTERFACE:-wlan_sim}"
 PERSONA_TYPE="${PERSONA_TYPE:-good}"
 HOSTNAME="${HOSTNAME:-CNXNMist-Persona}"
