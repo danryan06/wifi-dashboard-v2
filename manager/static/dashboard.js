@@ -161,11 +161,13 @@ function updateInterfaceDropdown(personas) {
             if (data.success) {
                 select.innerHTML = '<option value="">Select interface...</option>';
                 Object.keys(data.interfaces).forEach(iface => {
+                    const ifaceInfo = data.interfaces[iface] || {};
                     const isAssigned = assignedInterfaces.has(iface);
+                    const isProtected = ifaceInfo.assignable === false;
                     const option = document.createElement('option');
                     option.value = iface;
-                    option.textContent = `${iface}${isAssigned ? ' (assigned)' : ''}`;
-                    option.disabled = isAssigned;
+                    option.textContent = `${iface}${isAssigned ? ' (assigned)' : ''}${isProtected ? ' (protected)' : ''}`;
+                    option.disabled = isAssigned || isProtected;
                     select.appendChild(option);
                 });
                 // Restore selection if it still exists
@@ -331,7 +333,11 @@ function displayHardwareView(interfaces, personas) {
                             Container: ${persona.name.substring(0, 30)}...
                         </div>
                     ` : `
-                        <div style="color: var(--muted);">Available for assignment</div>
+                        <div style="color: var(--muted);">${
+                            info.assignable === false
+                                ? `Protected: ${info.reason || 'Not assignable'}`
+                                : 'Available for assignment'
+                        }</div>
                     `}
                     <div style="margin-top: 8px; font-size: 0.85em;">
                         Type: ${info.type || 'unknown'}<br>

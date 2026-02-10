@@ -112,6 +112,28 @@ class PersonaManager:
         except Exception as e:
             logger.error(f"Failed to save state: {e}")
 
+    def _get_default_route_interface(self) -> Optional[str]:
+        """Return the host interface used for default route (management path)."""
+        try:
+            result = subprocess.run(
+                ["ip", "route", "show", "default"],
+                capture_output=True,
+                text=True,
+                timeout=3
+            )
+            if result.returncode != 0:
+                return None
+            # Example: "default via 192.168.1.1 dev eth0 proto dhcp metric 100"
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if "dev" in parts:
+                    idx = parts.index("dev")
+                    if idx + 1 < len(parts):
+                        return parts[idx + 1].strip()
+        except Exception as e:
+            logger.debug(f"Could not determine default route interface: {e}")
+        return None
+
     def start_persona(
         self,
         persona_type: str,
@@ -135,6 +157,14 @@ class PersonaManager:
         """
         if persona_type not in self.PERSONA_CONFIGS:
             return False, f"Unknown persona type: {persona_type}", None
+
+        # Safety guard: never allow assigning the host default-route interface.
+        protected_iface = self._get_default_route_interface()
+        if protected_iface and interface == protected_iface:
+            return False, (
+                f"Interface {interface} is protected (host default route / management interface). "
+                "Choose a non-management interface."
+            ), None
 
         # Clean up stale state first
         self._cleanup_stale_state()

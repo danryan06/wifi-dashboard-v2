@@ -403,6 +403,26 @@ def api_aggregate_logs():
 def api_interfaces():
     """Get available network interfaces"""
     try:
+        # Determine host management interface (default route) to protect it from assignment.
+        protected_iface = None
+        try:
+            import subprocess
+            route_result = subprocess.run(
+                ['ip', 'route', 'show', 'default'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            for line in route_result.stdout.split('\n'):
+                parts = line.split()
+                if 'dev' in parts:
+                    idx = parts.index('dev')
+                    if idx + 1 < len(parts):
+                        protected_iface = parts[idx + 1].strip()
+                        break
+        except Exception as e:
+            logger.debug(f"Could not determine protected interface: {e}")
+
         # Try to initialize, but interfaces can work without Docker
         if interface_manager is None:
             initialize_managers()
@@ -425,8 +445,14 @@ def api_interfaces():
                             'name': iface, 
                             'type': 'wifi' if 'wlan' in iface else 'ethernet',
                             'state': state,
-                            'available': True
+                            'available': True,
+                            'assignable': True
                         }
+                        if protected_iface and iface == protected_iface:
+                            interfaces[iface]['available'] = False
+                            interfaces[iface]['assignable'] = False
+                            interfaces[iface]['protected'] = True
+                            interfaces[iface]['reason'] = 'Management/default-route interface'
             return jsonify({"success": True, "interfaces": interfaces, "note": "Basic mode - Docker unavailable"})
         
         interfaces = interface_manager.list_available_interfaces(include_ethernet=True)
@@ -436,6 +462,14 @@ def api_interfaces():
                 iface_info['state'] = 'unknown'
             if 'type' not in iface_info:
                 iface_info['type'] = 'wifi' if 'wlan' in iface_name else 'ethernet'
+            if 'assignable' not in iface_info:
+                iface_info['assignable'] = True
+            # Mark management/default-route interface as protected.
+            if protected_iface and iface_name == protected_iface:
+                iface_info['available'] = False
+                iface_info['assignable'] = False
+                iface_info['protected'] = True
+                iface_info['reason'] = 'Management/default-route interface'
         
         return jsonify({"success": True, "interfaces": interfaces})
     except Exception as e:
