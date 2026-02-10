@@ -288,10 +288,10 @@ load_usb_wifi_drivers() {
             local device_id="${vendor_id}:${product_id}"
             
             # Check if this is a known Wi-Fi device (use safer check to avoid unbound variable error)
-            local driver=""
-            if [[ -v USB_WIFI_DRIVERS[$device_id] ]]; then
-                driver="${USB_WIFI_DRIVERS[$device_id]}"
-            fi
+            # Temporarily disable unset variable checking for array access
+            set +u
+            local driver="${USB_WIFI_DRIVERS[$device_id]:-}"
+            set -u
             
             if [[ -n "$driver" ]]; then
                 local device_name
