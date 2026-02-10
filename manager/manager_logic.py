@@ -182,7 +182,7 @@ class PersonaManager:
             # Build environment variables
             env_vars = {
                 'PERSONA_TYPE': persona_type,
-                'INTERFACE': 'wlan_sim',  # Standardized name inside container
+                'INTERFACE': 'eth_sim' if persona_type == 'wired' else 'wlan_sim',  # Standardized name inside container
                 'HOSTNAME': config['hostname'],
                 'TRAFFIC_INTENSITY': config.get('traffic_intensity', 'medium'),
                 'ROAMING_ENABLED': str(config.get('roaming_enabled', False)).lower(),
