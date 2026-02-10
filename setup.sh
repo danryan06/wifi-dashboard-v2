@@ -287,9 +287,13 @@ load_usb_wifi_drivers() {
             local product_id="${BASH_REMATCH[2]}"
             local device_id="${vendor_id}:${product_id}"
             
-            # Check if this is a known Wi-Fi device
-            if [[ -n "${USB_WIFI_DRIVERS[$device_id]}" ]]; then
-                local driver="${USB_WIFI_DRIVERS[$device_id]}"
+            # Check if this is a known Wi-Fi device (use safer check to avoid unbound variable error)
+            local driver=""
+            if [[ -v USB_WIFI_DRIVERS[$device_id] ]]; then
+                driver="${USB_WIFI_DRIVERS[$device_id]}"
+            fi
+            
+            if [[ -n "$driver" ]]; then
                 local device_name
                 device_name=$(echo "$line" | sed 's/.*ID [0-9a-f:]* //')
                 
