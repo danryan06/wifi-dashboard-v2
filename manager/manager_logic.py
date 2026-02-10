@@ -337,8 +337,65 @@ class PersonaManager:
             logger.exception(f"Failed to stop persona: {e}")
             return False, f"Error: {str(e)}"
 
+    def _cleanup_stale_state(self):
+        """Remove state entries for containers that no longer exist."""
+        if not self._ensure_client():
+            return
+        
+        try:
+            # Get all actual persona containers
+            actual_containers = set()
+            all_containers = self.client.containers.list(all=True, filters={'name': 'persona-'})
+            for container in all_containers:
+                actual_containers.add(container.id)
+                actual_containers.add(container.name)
+            
+            # Clean up personas that don't exist
+            personas_to_remove = []
+            for container_id, persona_info in self.state.get('personas', {}).items():
+                if container_id not in actual_containers and persona_info.get('container_name') not in actual_containers:
+                    personas_to_remove.append(container_id)
+                    logger.info(f"Cleaning up stale persona state: {persona_info.get('container_name')} (container doesn't exist)")
+            
+            for container_id in personas_to_remove:
+                # Remove from personas
+                if container_id in self.state.get('personas', {}):
+                    persona_info = self.state['personas'][container_id]
+                    interface = persona_info.get('interface')
+                    
+                    # Remove from interfaces
+                    if interface and interface in self.state.get('interfaces', {}):
+                        if self.state['interfaces'][interface].get('container_id') == container_id:
+                            del self.state['interfaces'][interface]
+                            logger.info(f"Removed stale interface assignment: {interface}")
+                    
+                    del self.state['personas'][container_id]
+            
+            # Clean up interfaces that reference non-existent containers
+            interfaces_to_remove = []
+            for interface, info in self.state.get('interfaces', {}).items():
+                container_id = info.get('container_id')
+                container_name = info.get('container_name')
+                if container_id and container_id not in actual_containers:
+                    if container_name and container_name not in actual_containers:
+                        interfaces_to_remove.append(interface)
+                        logger.info(f"Cleaning up stale interface assignment: {interface} (container {container_name} doesn't exist)")
+            
+            for interface in interfaces_to_remove:
+                del self.state['interfaces'][interface]
+            
+            if personas_to_remove or interfaces_to_remove:
+                self._save_state()
+                logger.info(f"Cleaned up {len(personas_to_remove)} stale persona(s) and {len(interfaces_to_remove)} stale interface assignment(s)")
+                
+        except Exception as e:
+            logger.warning(f"Error cleaning up stale state: {e}")
+
     def list_personas(self) -> List[Dict]:
         """List all running persona containers."""
+        # Clean up stale state first
+        self._cleanup_stale_state()
+        
         personas = []
         
         if not self._ensure_client():
