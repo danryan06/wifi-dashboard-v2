@@ -136,10 +136,41 @@ class PersonaManager:
         if persona_type not in self.PERSONA_CONFIGS:
             return False, f"Unknown persona type: {persona_type}", None
 
+        # Clean up stale state first
+        self._cleanup_stale_state()
+        
         # Check if interface is already assigned
         if interface in self.state.get('interfaces', {}):
             existing = self.state['interfaces'][interface]
-            return False, f"Interface {interface} already assigned to {existing.get('container_name')}", None
+            container_id = existing.get('container_id')
+            container_name = existing.get('container_name')
+            
+            # Verify the container actually exists
+            container_exists = False
+            if self._ensure_client():
+                try:
+                    if container_id:
+                        try:
+                            self.client.containers.get(container_id)
+                            container_exists = True
+                        except docker.errors.NotFound:
+                            pass
+                    if not container_exists and container_name:
+                        try:
+                            self.client.containers.get(container_name)
+                            container_exists = True
+                        except docker.errors.NotFound:
+                            pass
+                except:
+                    pass
+            
+            if container_exists:
+                return False, f"Interface {interface} already assigned to {container_name}", None
+            else:
+                # Container doesn't exist, clean up stale assignment
+                logger.info(f"Removing stale interface assignment for {interface} (container {container_name} doesn't exist)")
+                del self.state['interfaces'][interface]
+                self._save_state()
 
         config = self.PERSONA_CONFIGS[persona_type]
         container_name = f"persona-{persona_type}-{interface}-{int(time.time())}"
