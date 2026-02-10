@@ -24,6 +24,7 @@ WORKDIR /app
 COPY manager/ ./manager/
 COPY templates/ ./templates/
 COPY configs/ ./configs/
+COPY VERSION ./VERSION
 
 # Create necessary directories
 RUN mkdir -p /app/logs /app/stats /app/state /app/configs
