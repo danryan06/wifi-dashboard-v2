@@ -21,6 +21,21 @@ log() {
 log "Starting good Wi-Fi client on $INTERFACE"
 log "SSID: $SSID, Traffic: $TRAFFIC_INTENSITY, Roaming: $ROAMING_ENABLED"
 
+# More stable connection check than a single `iw link` sample.
+is_connected() {
+    # Prefer wpa_cli state when available.
+    if command -v wpa_cli >/dev/null 2>&1; then
+        local state
+        state=$(wpa_cli -i "$INTERFACE" status 2>/dev/null | grep "^wpa_state=" | cut -d= -f2 || true)
+        if [ "$state" = "COMPLETED" ]; then
+            return 0
+        fi
+    fi
+
+    # Fallback to iw link output.
+    iw dev "$INTERFACE" link 2>/dev/null | grep -qE "Connected|SSID"
+}
+
 # Connect to Wi-Fi using wpa_supplicant
 connect_wifi() {
     log "Connecting to SSID: $SSID"
@@ -178,13 +193,15 @@ EOF
     
     sleep 3
     
-    # Verify connectivity
-    if ping -c 1 -W 5 8.8.8.8 >/dev/null 2>&1; then
+    # Verify connectivity (bind ping to the target interface).
+    if ping -I "$INTERFACE" -c 1 -W 5 8.8.8.8 >/dev/null 2>&1; then
         log "Internet connectivity verified"
         return 0
     else
-        log "WARNING: No internet connectivity"
-        return 1
+        # Keep session up even if internet probe fails once; Wi-Fi is associated and has DHCP.
+        # Traffic generator + monitor loop will continue and recover naturally.
+        log "WARNING: No internet connectivity (association is up, continuing)"
+        return 0
     fi
 }
 
@@ -226,9 +243,19 @@ while true; do
             ROAMING_PID=$!
         fi
         
-        # Monitor connection
-        while iw dev "$INTERFACE" link | grep -q "Connected"; do
-            sleep 10
+        # Monitor connection with tolerance for transient link sampling glitches.
+        missed_checks=0
+        while true; do
+            if is_connected; then
+                missed_checks=0
+            else
+                missed_checks=$((missed_checks + 1))
+                log "Connection check missed ($missed_checks/3)"
+                if [ "$missed_checks" -ge 3 ]; then
+                    break
+                fi
+            fi
+            sleep 5
         done
         
         log "Connection lost, reconnecting..."
