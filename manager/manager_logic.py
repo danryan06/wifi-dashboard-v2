@@ -145,30 +145,34 @@ class PersonaManager:
             container_id = existing.get('container_id')
             container_name = existing.get('container_name')
             
-            # Verify the container actually exists
-            container_exists = False
+            # Verify the container actually exists and is running
+            container_running = False
             if self._ensure_client():
                 try:
                     if container_id:
                         try:
-                            self.client.containers.get(container_id)
-                            container_exists = True
+                            c = self.client.containers.get(container_id)
+                            c.reload()
+                            if c.status == 'running':
+                                container_running = True
                         except docker.errors.NotFound:
                             pass
-                    if not container_exists and container_name:
+                    if not container_running and container_name:
                         try:
-                            self.client.containers.get(container_name)
-                            container_exists = True
+                            c = self.client.containers.get(container_name)
+                            c.reload()
+                            if c.status == 'running':
+                                container_running = True
                         except docker.errors.NotFound:
                             pass
                 except:
                     pass
             
-            if container_exists:
+            if container_running:
                 return False, f"Interface {interface} already assigned to {container_name}", None
             else:
-                # Container doesn't exist, clean up stale assignment
-                logger.info(f"Removing stale interface assignment for {interface} (container {container_name} doesn't exist)")
+                # Container missing or not running, clean up stale assignment
+                logger.info(f"Removing stale interface assignment for {interface} (container {container_name} is missing or not running)")
                 del self.state['interfaces'][interface]
                 self._save_state()
 
@@ -371,24 +375,37 @@ class PersonaManager:
             return False, f"Error: {str(e)}"
 
     def _cleanup_stale_state(self):
-        """Remove state entries for containers that no longer exist."""
+        """Remove state entries for containers that no longer exist or are not running."""
         if not self._ensure_client():
             return
         
         try:
-            # Get all actual persona containers
+            # Get all actual persona containers and their statuses
             actual_containers = set()
+            container_status = {}
             all_containers = self.client.containers.list(all=True, filters={'name': 'persona-'})
             for container in all_containers:
                 actual_containers.add(container.id)
                 actual_containers.add(container.name)
+                container_status[container.id] = container.status
+                container_status[container.name] = container.status
             
-            # Clean up personas that don't exist
+            # Clean up personas that don't exist OR are not running
             personas_to_remove = []
             for container_id, persona_info in self.state.get('personas', {}).items():
-                if container_id not in actual_containers and persona_info.get('container_name') not in actual_containers:
+                container_name = persona_info.get('container_name')
+                if container_id not in actual_containers and container_name not in actual_containers:
                     personas_to_remove.append(container_id)
                     logger.info(f"Cleaning up stale persona state: {persona_info.get('container_name')} (container doesn't exist)")
+                else:
+                    # Container exists, but remove stale state if it is not running
+                    status = container_status.get(container_id) or container_status.get(container_name)
+                    if status and status != 'running':
+                        personas_to_remove.append(container_id)
+                        logger.info(
+                            f"Cleaning up stale persona state: {persona_info.get('container_name')} "
+                            f"(container status: {status})"
+                        )
             
             for container_id in personas_to_remove:
                 # Remove from personas
@@ -404,15 +421,22 @@ class PersonaManager:
                     
                     del self.state['personas'][container_id]
             
-            # Clean up interfaces that reference non-existent containers
+            # Clean up interfaces that reference non-existent or non-running containers
             interfaces_to_remove = []
             for interface, info in self.state.get('interfaces', {}).items():
                 container_id = info.get('container_id')
                 container_name = info.get('container_name')
-                if container_id and container_id not in actual_containers:
-                    if container_name and container_name not in actual_containers:
+                if container_id and container_id not in actual_containers and container_name and container_name not in actual_containers:
+                    interfaces_to_remove.append(interface)
+                    logger.info(f"Cleaning up stale interface assignment: {interface} (container {container_name} doesn't exist)")
+                else:
+                    status = container_status.get(container_id) or container_status.get(container_name)
+                    if status and status != 'running':
                         interfaces_to_remove.append(interface)
-                        logger.info(f"Cleaning up stale interface assignment: {interface} (container {container_name} doesn't exist)")
+                        logger.info(
+                            f"Cleaning up stale interface assignment: {interface} "
+                            f"(container {container_name} status: {status})"
+                        )
             
             for interface in interfaces_to_remove:
                 del self.state['interfaces'][interface]
