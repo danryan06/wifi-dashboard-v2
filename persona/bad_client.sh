@@ -47,8 +47,9 @@ EOF
             pkill -f "wpa_supplicant.*$INTERFACE" || true
             sleep 1
             
-            # Attempt connection (will fail)
-            timeout 10 wpa_supplicant -i "$INTERFACE" -c "$WPA_CONF" -f "$LOG_FILE" 2>&1 || true
+            # Attempt connection (expected to fail auth with wrong password)
+            # Use nl80211 driver explicitly and append debug output to persona log.
+            timeout 10 wpa_supplicant -Dnl80211 -i "$INTERFACE" -c "$WPA_CONF" -dd >> "$LOG_FILE" 2>&1 || true
             
             # Wait a bit before next attempt
             sleep 5
