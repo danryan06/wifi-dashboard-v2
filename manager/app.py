@@ -275,6 +275,7 @@ def api_start_persona():
         interface = data.get("interface")
         ssid = data.get("ssid")
         password = data.get("password")
+        roaming_enabled = bool(data.get("roaming_enabled", False))
         
         if not persona_type or not interface:
             return jsonify({"success": False, "error": "persona_type and interface required"}), 400
@@ -283,6 +284,8 @@ def api_start_persona():
         if not ssid or not password:
             ssid, password = read_config()
         
+        start_kwargs = {}
+
         # For wired personas, no Wi-Fi config needed
         if persona_type == 'wired':
             ssid = None
@@ -292,16 +295,27 @@ def api_start_persona():
             if not ssid:
                 return jsonify({"success": False, "error": "SSID required for bad persona"}), 400
             password = None  # Bad personas don't use the correct password
-        # For good personas, both are required
+        # For good personas, both are required and roaming is optional
         elif persona_type == 'good':
             if not ssid or not password:
                 return jsonify({"success": False, "error": "SSID and password required for good persona"}), 400
+            start_kwargs["roaming_enabled"] = roaming_enabled
+            start_kwargs["roaming_profile"] = "standard"
+        # Dedicated roaming persona uses aggressive roaming behavior
+        elif persona_type == 'roamer':
+            if not ssid or not password:
+                return jsonify({"success": False, "error": "SSID and password required for roamer persona"}), 400
+            start_kwargs["roaming_enabled"] = True
+            start_kwargs["roaming_profile"] = "aggressive"
+        else:
+            return jsonify({"success": False, "error": f"Unsupported persona type: {persona_type}"}), 400
         
         success, message, container_id = persona_manager.start_persona(
             persona_type=persona_type,
             interface=interface,
             ssid=ssid,
-            password=password
+            password=password,
+            **start_kwargs
         )
         
         if success:

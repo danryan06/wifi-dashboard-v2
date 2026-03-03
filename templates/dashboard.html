@@ -34,6 +34,10 @@
             border-left: 4px solid var(--info);
         }
 
+        .persona-card.roamer {
+            border-left: 4px solid var(--accent);
+        }
+
         .persona-header {
             display: flex;
             justify-content: space-between;
@@ -185,6 +189,7 @@
                             <label for="persona-type">Persona Type</label>
                             <select id="persona-type" name="persona_type" required>
                                 <option value="good">Good Client (Wi-Fi Success)</option>
+                                <option value="roamer">Roaming Client (BSSID Scan + Roam)</option>
                                 <option value="bad">Bad Client (Auth Failures)</option>
                                 <option value="wired">Wired Client (Ethernet)</option>
                             </select>
@@ -194,6 +199,15 @@
                             <select id="persona-interface" name="interface" required>
                                 <option value="">Select interface...</option>
                             </select>
+                        </div>
+                    </div>
+                    <div class="form-row" id="good-roaming-row">
+                        <div class="form-group">
+                            <label for="good-roaming-enabled">Good Persona Option</label>
+                            <div style="display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+                                <input id="good-roaming-enabled" name="good_roaming_enabled" type="checkbox">
+                                <span style="color: var(--muted);">Enable active BSSID scan + roam</span>
+                            </div>
                         </div>
                     </div>
                     <button type="submit">▶️ Start Persona</button>

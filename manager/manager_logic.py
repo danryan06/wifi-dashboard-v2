@@ -25,7 +25,15 @@ class PersonaManager:
             'hostname': 'CNXNMist-WiFiGood',
             'image': 'wifi-dashboard-persona:latest',
             'traffic_intensity': 'medium',
+            'roaming_enabled': False,
+            'roaming_profile': 'standard',
+        },
+        'roamer': {
+            'hostname': 'CNXNMist-WiFiRoamer',
+            'image': 'wifi-dashboard-persona:latest',
+            'traffic_intensity': 'medium',
             'roaming_enabled': True,
+            'roaming_profile': 'aggressive',
         },
         'bad': {
             'hostname': 'CNXNMist-WiFiBad',
@@ -146,7 +154,7 @@ class PersonaManager:
         Start a persona container and move the specified interface into it.
         
         Args:
-            persona_type: Type of persona ('good', 'bad', 'wired')
+            persona_type: Type of persona ('good', 'roamer', 'bad', 'wired')
             interface: Physical interface name (e.g., 'wlan1')
             ssid: Wi-Fi SSID (optional, uses config if not provided)
             password: Wi-Fi password (optional, uses config if not provided)

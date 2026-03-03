@@ -9,6 +9,7 @@ SSID="$2"
 PASSWORD="$3"
 TRAFFIC_INTENSITY="${4:-medium}"
 ROAMING_ENABLED="${5:-false}"
+ROAMING_PROFILE="${6:-standard}"
 
 LOG_DIR="/app/logs"
 mkdir -p "$LOG_DIR"
@@ -19,7 +20,21 @@ log() {
 }
 
 log "Starting good Wi-Fi client on $INTERFACE"
-log "SSID: $SSID, Traffic: $TRAFFIC_INTENSITY, Roaming: $ROAMING_ENABLED"
+log "SSID: $SSID, Traffic: $TRAFFIC_INTENSITY, Roaming: $ROAMING_ENABLED, Profile: $ROAMING_PROFILE"
+
+# Roaming profile tuning.
+case "$ROAMING_PROFILE" in
+    aggressive)
+        ROAM_SCAN_INTERVAL=30
+        ROAM_MIN_IMPROVEMENT_DB=5
+        ROAM_MIN_SIGNAL_DBM=-82
+        ;;
+    *)
+        ROAM_SCAN_INTERVAL=90
+        ROAM_MIN_IMPROVEMENT_DB=8
+        ROAM_MIN_SIGNAL_DBM=-78
+        ;;
+esac
 
 # More stable connection check than a single `iw link` sample.
 is_connected() {
@@ -34,6 +49,157 @@ is_connected() {
 
     # Fallback to iw link output.
     iw dev "$INTERFACE" link 2>/dev/null | grep -qE "Connected|SSID"
+}
+
+is_integer() {
+    [ -n "${1:-}" ] && [ "$1" -eq "$1" ] 2>/dev/null
+}
+
+get_current_bssid() {
+    if command -v wpa_cli >/dev/null 2>&1; then
+        wpa_cli -i "$INTERFACE" status 2>/dev/null | awk -F= '/^bssid=/{print $2; exit}'
+    fi
+}
+
+get_current_signal_dbm() {
+    local sig
+    sig=$(iw dev "$INTERFACE" link 2>/dev/null | awk '/signal:/ {print $2; exit}')
+    if is_integer "$sig"; then
+        echo "$sig"
+        return 0
+    fi
+
+    if command -v wpa_cli >/dev/null 2>&1; then
+        sig=$(wpa_cli -i "$INTERFACE" signal_poll 2>/dev/null | awk -F= '/^RSSI=/{print $2; exit}')
+        if is_integer "$sig"; then
+            echo "$sig"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+discover_best_bssid_wpa() {
+    local current_bssid="$1"
+    local best
+
+    # Trigger a scan; scan_results may still include previous scans if this fails.
+    wpa_cli -i "$INTERFACE" scan >/dev/null 2>&1 || true
+    sleep 2
+
+    best=$(
+        wpa_cli -i "$INTERFACE" scan_results 2>/dev/null \
+            | awk -F'\t' -v target_ssid="$SSID" -v current="$current_bssid" '
+                NR > 2 && $5 == target_ssid && tolower($1) != tolower(current) {
+                    print $1 "|" $3
+                }
+            ' \
+            | sort -t'|' -k2,2nr \
+            | head -1
+    )
+
+    [ -n "$best" ] || return 1
+    echo "$best"
+    return 0
+}
+
+discover_best_bssid_iw() {
+    local current_bssid="$1"
+    local scan_output
+    local best
+    local attempt
+
+    for attempt in 1 2 3; do
+        scan_output=$(iw dev "$INTERFACE" scan 2>&1) && break
+        if echo "$scan_output" | grep -qi "busy"; then
+            log "iw scan busy (attempt ${attempt}/3), retrying..."
+            sleep 2
+            continue
+        fi
+        return 1
+    done
+
+    [ -n "${scan_output:-}" ] || return 1
+
+    best=$(
+        echo "$scan_output" \
+            | awk -v target_ssid="$SSID" -v current="$current_bssid" '
+                /^BSS / {
+                    bssid=$2
+                    sub(/\(.*/, "", bssid)
+                    signal=""
+                    ssid=""
+                }
+                /^[[:space:]]*signal:/ {
+                    signal=int($2)
+                }
+                /^[[:space:]]*SSID:/ {
+                    ssid=substr($0, index($0, $2))
+                    if (ssid == target_ssid && tolower(bssid) != tolower(current) && signal != "") {
+                        print bssid "|" signal
+                    }
+                }
+            ' \
+            | sort -t'|' -k2,2nr \
+            | head -1
+    )
+
+    [ -n "$best" ] || return 1
+    echo "$best"
+    return 0
+}
+
+discover_best_bssid() {
+    local current_bssid="$1"
+
+    command -v wpa_cli >/dev/null 2>&1 || return 1
+
+    # Fast path: use wpa_cli scan cache first.
+    if best=$(discover_best_bssid_wpa "$current_bssid"); then
+        echo "$best"
+        return 0
+    fi
+
+    # Fallback: full iw scan for complete BSSID view.
+    if best=$(discover_best_bssid_iw "$current_bssid"); then
+        log "Using iw scan fallback candidate list"
+        echo "$best"
+        return 0
+    fi
+
+    return 1
+}
+
+perform_roam() {
+    local target_bssid="$1"
+    local roam_timeout=20
+    local waited=0
+
+    log "Attempting roam to BSSID $target_bssid"
+    if ! wpa_cli -i "$INTERFACE" roam "$target_bssid" >/dev/null 2>&1; then
+        log "Roam command failed for $target_bssid"
+        return 1
+    fi
+
+    while [ "$waited" -lt "$roam_timeout" ]; do
+        local state
+        local bssid
+        state=$(wpa_cli -i "$INTERFACE" status 2>/dev/null | awk -F= '/^wpa_state=/{print $2; exit}')
+        bssid=$(wpa_cli -i "$INTERFACE" status 2>/dev/null | awk -F= '/^bssid=/{print $2; exit}')
+
+        if [ "$state" = "COMPLETED" ] && [ "$bssid" = "$target_bssid" ]; then
+            log "Roam successful: now on $bssid"
+            return 0
+        fi
+
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    log "Roam timeout for target $target_bssid; forcing reconnect"
+    wpa_cli -i "$INTERFACE" reconnect >/dev/null 2>&1 || true
+    return 1
 }
 
 # Connect to Wi-Fi using wpa_supplicant
@@ -64,7 +230,8 @@ update_config=1
 network={
     ssid="$SSID"
     psk="$PASSWORD"
-    key_mgmt=WPA-PSK
+    # Allow FT-PSK where available while remaining compatible with WPA-PSK.
+    key_mgmt=WPA-PSK FT-PSK
     scan_ssid=1
 }
 EOF
@@ -209,25 +376,61 @@ EOF
     fi
 }
 
-# Roaming logic (simplified - would need BSSID discovery in full implementation)
 roam_bssids() {
     if [ "$ROAMING_ENABLED" != "true" ]; then
         return
     fi
     
-    log "Roaming enabled - scanning for BSSIDs..."
+    log "Roaming enabled - active BSSID scanning started (interval=${ROAM_SCAN_INTERVAL}s, min_gain=${ROAM_MIN_IMPROVEMENT_DB}dB)"
     
     while true; do
-        sleep 120  # Check every 2 minutes
-        
-        # Scan for available BSSIDs
-        iw dev "$INTERFACE" scan | grep -E "SSID|BSS" | head -20 >> "$LOG_FILE" || true
-        
-        # In a full implementation, this would:
-        # 1. Discover all BSSIDs for the SSID
-        # 2. Evaluate signal strength
-        # 3. Roam to a better BSSID if available
-        # 4. Maintain traffic during roaming
+        sleep "$ROAM_SCAN_INTERVAL"
+
+        if ! is_connected; then
+            log "Roaming check skipped: interface not connected"
+            continue
+        fi
+
+        current_bssid=$(get_current_bssid || true)
+        current_signal=$(get_current_signal_dbm || true)
+
+        if [ -z "$current_bssid" ]; then
+            log "Roaming check skipped: current BSSID unknown"
+            continue
+        fi
+
+        if ! is_integer "$current_signal"; then
+            current_signal=-100
+        fi
+
+        candidate=$(discover_best_bssid "$current_bssid" || true)
+        if [ -z "$candidate" ]; then
+            log "No alternate BSSID candidates found for SSID $SSID"
+            continue
+        fi
+
+        target_bssid="${candidate%%|*}"
+        target_signal="${candidate##*|}"
+
+        if ! is_integer "$target_signal"; then
+            log "Skipping candidate $target_bssid due to invalid signal value: $target_signal"
+            continue
+        fi
+
+        signal_gain=$((target_signal - current_signal))
+
+        if [ "$target_signal" -lt "$ROAM_MIN_SIGNAL_DBM" ]; then
+            log "Skipping candidate $target_bssid (signal=${target_signal}dBm below floor ${ROAM_MIN_SIGNAL_DBM}dBm)"
+            continue
+        fi
+
+        if [ "$signal_gain" -lt "$ROAM_MIN_IMPROVEMENT_DB" ]; then
+            log "Keeping current BSSID $current_bssid (current=${current_signal}dBm, candidate=${target_signal}dBm, gain=${signal_gain}dB < ${ROAM_MIN_IMPROVEMENT_DB}dB)"
+            continue
+        fi
+
+        log "Roam candidate selected: $target_bssid (current=${current_signal}dBm, target=${target_signal}dBm, gain=${signal_gain}dB)"
+        perform_roam "$target_bssid" || true
     done
 }
 

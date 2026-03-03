@@ -12,6 +12,17 @@ document.querySelectorAll(".tab").forEach(tab => {
     tab.onclick = () => switchTab(tab.dataset.tab);
 });
 
+const personaTypeSelect = document.getElementById('persona-type');
+const goodRoamingRow = document.getElementById('good-roaming-row');
+
+function updatePersonaOptionsVisibility() {
+    if (!personaTypeSelect || !goodRoamingRow) return;
+    goodRoamingRow.style.display = personaTypeSelect.value === 'good' ? 'grid' : 'none';
+}
+
+personaTypeSelect?.addEventListener('change', updatePersonaOptionsVisibility);
+updatePersonaOptionsVisibility();
+
 function switchTab(tabName) {
     document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
     document.querySelector(`[data-tab="${tabName}"]`).classList.add("active");
@@ -110,10 +121,14 @@ function displayPersonas(personas) {
                           persona.status === 'exited' ? 'exited' : 'stopped';
         const personaClass = persona.persona_type || 'unknown';
         
+        const personaTypeLabel = persona.persona_type === 'roamer'
+            ? 'Roaming Client'
+            : `${persona.persona_type || 'Unknown'} Client`;
+
         return `
             <div class="persona-card ${personaClass}">
                 <div class="persona-header">
-                    <div class="persona-type">${persona.persona_type || 'Unknown'} Client</div>
+                    <div class="persona-type">${personaTypeLabel}</div>
                     <div class="persona-status ${statusClass}">${persona.status}</div>
                 </div>
                 <div style="margin-bottom: 12px;">
@@ -186,6 +201,7 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
     const formData = new FormData(e.target);
     const personaType = formData.get('persona_type');
     const interface = formData.get('interface');
+    const goodRoamingEnabled = document.getElementById('good-roaming-enabled')?.checked || false;
     
     if (!interface) {
         showMessage('Please select an interface', 'error');
@@ -207,7 +223,7 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
             showMessage('Please configure Wi-Fi SSID first in the Wi-Fi Config tab', 'error');
             return;
         }
-    } else if (personaType === 'good') {
+    } else if (personaType === 'good' || personaType === 'roamer') {
         // Good personas need both SSID and password
         // Check if config exists (password_masked indicates config was saved)
         if (!ssid || !hasPassword) {
@@ -223,6 +239,7 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
             body: JSON.stringify({
                 persona_type: personaType,
                 interface: interface,
+                roaming_enabled: personaType === 'good' ? goodRoamingEnabled : true,
                 // Backend will use saved config if not provided, but we pass SSID for clarity
                 ssid: personaType !== 'wired' ? ssid : undefined,
                 // Password is handled by backend from saved config
@@ -235,6 +252,7 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
             showMessage(data.message, 'success');
             setTimeout(updatePersonas, 2000);
             e.target.reset();
+            updatePersonaOptionsVisibility();
         } else {
             showMessage(data.error || 'Failed to start persona', 'error');
         }

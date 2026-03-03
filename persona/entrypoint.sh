@@ -12,6 +12,7 @@ SSID="${SSID:-}"
 PASSWORD="${PASSWORD:-}"
 TRAFFIC_INTENSITY="${TRAFFIC_INTENSITY:-medium}"
 ROAMING_ENABLED="${ROAMING_ENABLED:-false}"
+ROAMING_PROFILE="${ROAMING_PROFILE:-standard}"
 
 LOG_DIR="/app/logs"
 mkdir -p "$LOG_DIR"
@@ -55,7 +56,15 @@ case "$PERSONA_TYPE" in
     good)
         log "Starting good Wi-Fi client persona"
         if [ -n "$SSID" ] && [ -n "$PASSWORD" ]; then
-            /app/persona/good_client.sh "$INTERFACE" "$SSID" "$PASSWORD" "$TRAFFIC_INTENSITY" "$ROAMING_ENABLED" &
+            /app/persona/good_client.sh "$INTERFACE" "$SSID" "$PASSWORD" "$TRAFFIC_INTENSITY" "$ROAMING_ENABLED" "$ROAMING_PROFILE" &
+        else
+            log "WARNING: SSID or PASSWORD not provided, skipping connection"
+        fi
+        ;;
+    roamer)
+        log "Starting dedicated roaming persona"
+        if [ -n "$SSID" ] && [ -n "$PASSWORD" ]; then
+            /app/persona/good_client.sh "$INTERFACE" "$SSID" "$PASSWORD" "$TRAFFIC_INTENSITY" "true" "aggressive" &
         else
             log "WARNING: SSID or PASSWORD not provided, skipping connection"
         fi

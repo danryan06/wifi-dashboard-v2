@@ -107,7 +107,8 @@ http://[PI_IP_ADDRESS]:5000
 1. Navigate to the **Personas** tab
 2. Select an available interface (e.g., `wlan1`)
 3. Choose persona type:
-   - **Good Client**: Successful authentication with traffic generation
+   - **Good Client**: Successful authentication with traffic generation (optional BSSID scan+roam toggle)
+   - **Roaming Client**: Dedicated roaming persona with aggressive BSSID scan+roam behavior
    - **Bad Client**: Authentication failures for security testing
    - **Wired Client**: Ethernet-based heavy traffic
 4. Click **Start Persona**
@@ -160,7 +161,8 @@ The core "lift & shift" mechanism:
     "persona_type": "good",
     "interface": "wlan1",
     "ssid": "YourSSID",
-    "password": "YourPassword"
+    "password": "YourPassword",
+    "roaming_enabled": true
   }
   ```
 - `DELETE /api/personas/<container_id>` - Stop a persona
@@ -173,13 +175,14 @@ The core "lift & shift" mechanism:
 
 ### Environment Variables (Persona Containers)
 
-- `PERSONA_TYPE`: Type of persona (`good`, `bad`, `wired`)
+- `PERSONA_TYPE`: Type of persona (`good`, `roamer`, `bad`, `wired`)
 - `INTERFACE`: Interface name inside container (always `wlan_sim`)
 - `HOSTNAME`: DHCP hostname (e.g., `CNXNMist-WiFiGood`)
 - `SSID`: Wi-Fi network SSID
 - `PASSWORD`: Wi-Fi password
 - `TRAFFIC_INTENSITY`: Traffic level (`light`, `medium`, `heavy`)
 - `ROAMING_ENABLED`: Enable Wi-Fi roaming (`true`/`false`)
+- `ROAMING_PROFILE`: Roaming profile (`standard`/`aggressive`)
 
 ### State Persistence
 
