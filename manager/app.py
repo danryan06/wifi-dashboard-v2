@@ -9,6 +9,7 @@ import logging
 import time
 import json
 import traceback
+import re
 from datetime import datetime
 import threading
 import psutil
@@ -276,9 +277,14 @@ def api_start_persona():
         ssid = data.get("ssid")
         password = data.get("password")
         roaming_enabled = bool(data.get("roaming_enabled", False))
+        roaming_mode = (data.get("roaming_mode") or "best").strip().lower()
+        roam_interval_seconds = data.get("roam_interval_seconds")
+        roam_target_bssid = (data.get("roam_target_bssid") or "").strip()
         
         if not persona_type or not interface:
             return jsonify({"success": False, "error": "persona_type and interface required"}), 400
+        if roaming_mode not in {"best", "random", "target"}:
+            return jsonify({"success": False, "error": "roaming_mode must be one of: best, random, target"}), 400
         
         # Use config SSID/password if not provided
         if not ssid or not password:
@@ -301,12 +307,45 @@ def api_start_persona():
                 return jsonify({"success": False, "error": "SSID and password required for good persona"}), 400
             start_kwargs["roaming_enabled"] = roaming_enabled
             start_kwargs["roaming_profile"] = "standard"
+            if roaming_enabled:
+                start_kwargs["roam_force_any_alternate"] = True
+                start_kwargs["roaming_selection_mode"] = roaming_mode
+                if roam_interval_seconds is not None and str(roam_interval_seconds).strip() != "":
+                    try:
+                        interval_value = int(roam_interval_seconds)
+                        if interval_value < 15 or interval_value > 3600:
+                            return jsonify({"success": False, "error": "roam_interval_seconds must be between 15 and 3600"}), 400
+                        start_kwargs["roam_interval_seconds"] = interval_value
+                    except ValueError:
+                        return jsonify({"success": False, "error": "roam_interval_seconds must be an integer"}), 400
+                if roaming_mode == "target":
+                    if not roam_target_bssid:
+                        return jsonify({"success": False, "error": "roam_target_bssid required when roaming_mode=target"}), 400
+                    if not re.match(r"^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$", roam_target_bssid):
+                        return jsonify({"success": False, "error": "roam_target_bssid must be a valid MAC (aa:bb:cc:dd:ee:ff)"}), 400
+                    start_kwargs["roam_target_bssid"] = roam_target_bssid
         # Dedicated roaming persona uses aggressive roaming behavior
         elif persona_type == 'roamer':
             if not ssid or not password:
                 return jsonify({"success": False, "error": "SSID and password required for roamer persona"}), 400
             start_kwargs["roaming_enabled"] = True
             start_kwargs["roaming_profile"] = "aggressive"
+            start_kwargs["roam_force_any_alternate"] = True
+            start_kwargs["roaming_selection_mode"] = roaming_mode
+            if roam_interval_seconds is not None and str(roam_interval_seconds).strip() != "":
+                try:
+                    interval_value = int(roam_interval_seconds)
+                    if interval_value < 15 or interval_value > 3600:
+                        return jsonify({"success": False, "error": "roam_interval_seconds must be between 15 and 3600"}), 400
+                    start_kwargs["roam_interval_seconds"] = interval_value
+                except ValueError:
+                    return jsonify({"success": False, "error": "roam_interval_seconds must be an integer"}), 400
+            if roaming_mode == "target":
+                if not roam_target_bssid:
+                    return jsonify({"success": False, "error": "roam_target_bssid required when roaming_mode=target"}), 400
+                if not re.match(r"^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$", roam_target_bssid):
+                    return jsonify({"success": False, "error": "roam_target_bssid must be a valid MAC (aa:bb:cc:dd:ee:ff)"}), 400
+                start_kwargs["roam_target_bssid"] = roam_target_bssid
         else:
             return jsonify({"success": False, "error": f"Unsupported persona type: {persona_type}"}), 400
         
@@ -457,7 +496,7 @@ def api_interfaces():
                             state = 'UP'
                         interfaces[iface] = {
                             'name': iface, 
-                            'type': 'wifi' if 'wlan' in iface else 'ethernet',
+                            'type': 'wifi' if iface.startswith('wl') else 'ethernet',
                             'state': state,
                             'available': True,
                             'assignable': True
@@ -470,12 +509,30 @@ def api_interfaces():
             return jsonify({"success": True, "interfaces": interfaces, "note": "Basic mode - Docker unavailable"})
         
         interfaces = interface_manager.list_available_interfaces(include_ethernet=True)
+        # Merge in diagnostics-discovered Wi-Fi interfaces if the runtime scanner missed them.
+        # This helps when drivers expose interfaces inconsistently during initialization.
+        try:
+            diagnostics = run_diagnostics()
+            for wifi_iface in diagnostics.get("wifi_interfaces", []):
+                if wifi_iface == "wlan_sim":
+                    continue
+                if wifi_iface not in interfaces:
+                    interfaces[wifi_iface] = {
+                        "name": wifi_iface,
+                        "type": "wifi",
+                        "state": "unknown",
+                        "available": True,
+                        "assignable": True,
+                        "detected_via": "diagnostics",
+                    }
+        except Exception as e:
+            logger.debug(f"Diagnostics merge for interfaces failed: {e}")
         # Ensure all interfaces have required fields for display
         for iface_name, iface_info in interfaces.items():
             if 'state' not in iface_info:
                 iface_info['state'] = 'unknown'
             if 'type' not in iface_info:
-                iface_info['type'] = 'wifi' if 'wlan' in iface_name else 'ethernet'
+                iface_info['type'] = 'wifi' if iface_name.startswith('wl') else 'ethernet'
             if 'assignable' not in iface_info:
                 iface_info['assignable'] = True
             # Mark management/default-route interface as protected.

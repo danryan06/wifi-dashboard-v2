@@ -210,6 +210,26 @@
                             </div>
                         </div>
                     </div>
+                    <div class="form-row" id="roaming-controls-row">
+                        <div class="form-group">
+                            <label for="roaming-interval-seconds">Roam Interval (seconds)</label>
+                            <input id="roaming-interval-seconds" name="roam_interval_seconds" type="number" min="15" value="60">
+                        </div>
+                        <div class="form-group">
+                            <label for="roaming-mode">Roam Target Selection</label>
+                            <select id="roaming-mode" name="roaming_mode">
+                                <option value="best">Best Signal Alternate BSSID</option>
+                                <option value="random">Random Alternate BSSID</option>
+                                <option value="target">Specific BSSID</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row" id="roaming-target-row">
+                        <div class="form-group">
+                            <label for="roam-target-bssid">Target BSSID</label>
+                            <input id="roam-target-bssid" name="roam_target_bssid" type="text" placeholder="aa:bb:cc:dd:ee:ff">
+                        </div>
+                    </div>
                     <button type="submit">▶️ Start Persona</button>
                 </form>
             </div>

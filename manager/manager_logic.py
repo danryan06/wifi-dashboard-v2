@@ -127,6 +127,7 @@ class PersonaManager:
             "last_event": "",
             "connectivity": {"ping": "unknown", "dns": "unknown", "http": "unknown"},
             "roaming": {"status": "unknown", "last_target": "", "last_bssid": ""},
+            "download_mbps": {"last": None, "avg": None, "high": None, "low": None},
         }
         if not logs:
             return summary
@@ -135,6 +136,7 @@ class PersonaManager:
         if not lines:
             return summary
 
+        download_samples = []
         for line in reversed(lines):
             if not summary["last_event"] and ("GOOD-CLIENT:" in line or "TRAFFIC[" in line):
                 summary["last_event"] = line
@@ -161,6 +163,12 @@ class PersonaManager:
                         summary["connectivity"]["http"] = "ok"
                     elif "curl failed" in line:
                         summary["connectivity"]["http"] = "fail"
+            if "DL_METRIC " in line and "mbps=" in line:
+                try:
+                    mbps_token = line.split("mbps=", 1)[1].split()[0].strip()
+                    download_samples.append(float(mbps_token))
+                except Exception:
+                    pass
 
             if not summary["roaming"]["last_target"] and "Attempting roam to BSSID" in line:
                 summary["roaming"]["last_target"] = line.split("BSSID", 1)[-1].strip()
@@ -175,6 +183,12 @@ class PersonaManager:
                     summary["roaming"]["last_bssid"] = bssid_segment.split()[0].strip()
                 except Exception:
                     pass
+
+        if download_samples:
+            summary["download_mbps"]["last"] = round(download_samples[0], 2)
+            summary["download_mbps"]["avg"] = round(sum(download_samples) / len(download_samples), 2)
+            summary["download_mbps"]["high"] = round(max(download_samples), 2)
+            summary["download_mbps"]["low"] = round(min(download_samples), 2)
 
         return summary
 
@@ -574,6 +588,18 @@ class PersonaManager:
                         'created': attrs['Created'],
                         'image': attrs['Config']['Image'],
                     }
+                    env_vars = attrs.get('Config', {}).get('Env', []) or []
+                    env_map = {}
+                    for item in env_vars:
+                        if '=' in item:
+                            k, v = item.split('=', 1)
+                            env_map[k] = v
+                    persona_info['roaming_enabled'] = env_map.get('ROAMING_ENABLED', 'false') == 'true'
+                    persona_info['roaming_profile'] = env_map.get('ROAMING_PROFILE', 'standard')
+                    persona_info['roaming_mode'] = env_map.get('ROAMING_SELECTION_MODE', 'best')
+                    persona_info['roam_interval_seconds'] = env_map.get('ROAM_INTERVAL_SECONDS', '60')
+                    persona_info['roam_target_bssid'] = env_map.get('ROAM_TARGET_BSSID', '')
+                    persona_info['host_interface'] = env_map.get('HOST_INTERFACE')
                     try:
                         recent_logs = container.logs(tail=200, timestamps=False).decode('utf-8', errors='ignore')
                         persona_info['health'] = self._extract_persona_health(recent_logs)

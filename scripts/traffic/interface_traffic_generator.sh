@@ -80,9 +80,24 @@ do_http_pulls() {
   local size="$DL_SIZE" t
   for t in "${HTTP_TARGETS[@]}"; do
     log_msg "curl GET (range 0-$size) $t"
-    curl --interface "$IFACE" --max-time 180 --range 0-"$size" \
-         --silent --location --output /dev/null "$t" \
-      && log_msg "✓ curl ok" || log_msg "✗ curl failed"
+    local curl_metrics
+    curl_metrics=$(curl --interface "$IFACE" --max-time 180 --range 0-"$size" \
+         --silent --show-error --location --output /dev/null \
+         --write-out "code=%{http_code} time=%{time_total} bytes=%{size_download} speedBps=%{speed_download}" \
+         "$t" 2>/dev/null) || true
+
+    if [[ -n "$curl_metrics" ]] && [[ "$curl_metrics" == *"code=2"* || "$curl_metrics" == *"code=3"* || "$curl_metrics" == *"code=4"* ]]; then
+      local speed_bps speed_mbps
+      speed_bps=$(echo "$curl_metrics" | awk '{for(i=1;i<=NF;i++){if($i ~ /^speedBps=/){split($i,a,"="); print a[2]; break}}}')
+      speed_mbps=$(awk -v bps="${speed_bps:-0}" 'BEGIN { printf "%.2f", (bps*8)/1000000 }')
+      log_msg "✓ curl ok"
+      log_msg "DL_METRIC url=$t $curl_metrics mbps=$speed_mbps"
+    else
+      log_msg "✗ curl failed"
+      if [[ -n "$curl_metrics" ]]; then
+        log_msg "DL_METRIC_FAIL url=$t $curl_metrics"
+      fi
+    fi
     sleep $((SLEEP_BASE + (RANDOM % 3)))
   done
 }

@@ -14,13 +14,29 @@ document.querySelectorAll(".tab").forEach(tab => {
 
 const personaTypeSelect = document.getElementById('persona-type');
 const goodRoamingRow = document.getElementById('good-roaming-row');
+const goodRoamingToggle = document.getElementById('good-roaming-enabled');
+const roamingControlsRow = document.getElementById('roaming-controls-row');
+const roamingTargetRow = document.getElementById('roaming-target-row');
+const roamingModeSelect = document.getElementById('roaming-mode');
 
 function updatePersonaOptionsVisibility() {
     if (!personaTypeSelect || !goodRoamingRow) return;
     goodRoamingRow.style.display = personaTypeSelect.value === 'good' ? 'grid' : 'none';
+
+    const roamingEnabled = personaTypeSelect.value === 'roamer' || (personaTypeSelect.value === 'good' && goodRoamingToggle?.checked);
+    if (roamingControlsRow) {
+        roamingControlsRow.style.display = roamingEnabled ? 'grid' : 'none';
+    }
+
+    const needsTarget = roamingEnabled && roamingModeSelect?.value === 'target';
+    if (roamingTargetRow) {
+        roamingTargetRow.style.display = needsTarget ? 'grid' : 'none';
+    }
 }
 
 personaTypeSelect?.addEventListener('change', updatePersonaOptionsVisibility);
+goodRoamingToggle?.addEventListener('change', updatePersonaOptionsVisibility);
+roamingModeSelect?.addEventListener('change', updatePersonaOptionsVisibility);
 updatePersonaOptionsVisibility();
 
 function switchTab(tabName) {
@@ -128,6 +144,14 @@ function displayPersonas(personas) {
         const connectivity = health.connectivity || {};
         const roaming = health.roaming || {};
         const healthPhase = health.phase || 'unknown';
+        const dl = health.download_mbps || {};
+        const roamingEnabled = persona.roaming_enabled === true;
+        const roamingLabel = roamingEnabled
+            ? `enabled (${persona.roaming_profile || 'standard'})`
+            : 'disabled';
+        const roamMode = persona.roaming_mode || 'best';
+        const roamInterval = persona.roam_interval_seconds || '60';
+        const roamTarget = persona.roam_target_bssid || '';
 
         return `
             <div class="persona-card ${personaClass}">
@@ -151,6 +175,13 @@ function displayPersonas(personas) {
                     <div style="font-family: monospace; font-size: 0.85em;">${persona.hostname}</div>
                 </div>
                 ` : ''}
+                <div style="margin-bottom: 12px;">
+                    <div style="font-size: 0.9em; color: var(--muted); margin-bottom: 4px;">Roaming</div>
+                    <div style="font-size: 0.9em;">
+                        <strong>${roamingLabel}</strong><br>
+                        Mode: <strong>${roamMode}</strong> | Interval: <strong>${roamInterval}s</strong>${roamMode === 'target' && roamTarget ? `<br>Target: <code>${roamTarget}</code>` : ''}
+                    </div>
+                </div>
                 <div style="margin-bottom: 12px; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 8px;">
                     <div style="font-size: 0.9em; color: var(--muted); margin-bottom: 4px;">Health</div>
                     <div style="font-size: 0.85em; line-height: 1.5;">
@@ -158,7 +189,8 @@ function displayPersonas(personas) {
                         Ping: <strong>${connectivity.ping || 'unknown'}</strong> |
                         DNS: <strong>${connectivity.dns || 'unknown'}</strong> |
                         HTTP: <strong>${connectivity.http || 'unknown'}</strong><br>
-                        Roam: <strong>${roaming.status || 'unknown'}</strong>${roaming.last_bssid ? ` | BSSID: <code>${roaming.last_bssid}</code>` : ''}
+                        Roam: <strong>${roaming.status || 'unknown'}</strong>${roaming.last_bssid ? ` | BSSID: <code>${roaming.last_bssid}</code>` : ''}<br>
+                        DL Mbps: <strong>${dl.last ?? 'n/a'}</strong> (avg: ${dl.avg ?? 'n/a'}, high: ${dl.high ?? 'n/a'}, low: ${dl.low ?? 'n/a'})
                     </div>
                 </div>
                 ${health.last_event ? `
@@ -224,6 +256,9 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
     const personaType = formData.get('persona_type');
     const interface = formData.get('interface');
     const goodRoamingEnabled = document.getElementById('good-roaming-enabled')?.checked || false;
+    const roamingMode = document.getElementById('roaming-mode')?.value || 'best';
+    const roamIntervalSeconds = parseInt(document.getElementById('roaming-interval-seconds')?.value || '60', 10);
+    const roamTargetBssid = (document.getElementById('roam-target-bssid')?.value || '').trim();
     
     if (!interface) {
         showMessage('Please select an interface', 'error');
@@ -253,6 +288,18 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
             return;
         }
     }
+
+    const roamingEnabled = personaType === 'good' ? goodRoamingEnabled : personaType === 'roamer';
+    if (roamingEnabled) {
+        if (!Number.isInteger(roamIntervalSeconds) || roamIntervalSeconds < 15) {
+            showMessage('Roam interval must be an integer >= 15 seconds', 'error');
+            return;
+        }
+        if (roamingMode === 'target' && !roamTargetBssid) {
+            showMessage('Please provide a target BSSID for target roam mode', 'error');
+            return;
+        }
+    }
     
     try {
         const response = await fetch('/api/personas', {
@@ -261,7 +308,10 @@ document.getElementById('start-persona-form')?.addEventListener('submit', async 
             body: JSON.stringify({
                 persona_type: personaType,
                 interface: interface,
-                roaming_enabled: personaType === 'good' ? goodRoamingEnabled : true,
+                roaming_enabled: roamingEnabled,
+                roaming_mode: roamingMode,
+                roam_interval_seconds: roamIntervalSeconds,
+                roam_target_bssid: roamTargetBssid || undefined,
                 // Backend will use saved config if not provided, but we pass SSID for clarity
                 ssid: personaType !== 'wired' ? ssid : undefined,
                 // Password is handled by backend from saved config
