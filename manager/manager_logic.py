@@ -310,7 +310,10 @@ class PersonaManager:
             
             # Add any additional kwargs as environment variables
             for key, value in kwargs.items():
-                env_vars[key.upper()] = str(value)
+                if isinstance(value, bool):
+                    env_vars[key.upper()] = str(value).lower()
+                else:
+                    env_vars[key.upper()] = str(value)
 
             # Ensure Docker client is initialized
             if not self._ensure_client():
@@ -594,7 +597,7 @@ class PersonaManager:
                         if '=' in item:
                             k, v = item.split('=', 1)
                             env_map[k] = v
-                    persona_info['roaming_enabled'] = env_map.get('ROAMING_ENABLED', 'false') == 'true'
+                    persona_info['roaming_enabled'] = env_map.get('ROAMING_ENABLED', 'false').strip().lower() == 'true'
                     persona_info['roaming_profile'] = env_map.get('ROAMING_PROFILE', 'standard')
                     persona_info['roaming_mode'] = env_map.get('ROAMING_SELECTION_MODE', 'best')
                     persona_info['roam_interval_seconds'] = env_map.get('ROAM_INTERVAL_SECONDS', '60')

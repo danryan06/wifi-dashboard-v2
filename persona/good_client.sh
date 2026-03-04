@@ -10,6 +10,7 @@ PASSWORD="$3"
 TRAFFIC_INTENSITY="${4:-medium}"
 ROAMING_ENABLED="${5:-false}"
 ROAMING_PROFILE="${6:-standard}"
+ROAMING_ENABLED="$(echo "$ROAMING_ENABLED" | tr '[:upper:]' '[:lower:]')"
 
 LOG_DIR="/app/logs"
 mkdir -p "$LOG_DIR"
@@ -36,6 +37,7 @@ case "$ROAMING_PROFILE" in
         ;;
 esac
 ROAM_FORCE_ANY_ALTERNATE="${ROAM_FORCE_ANY_ALTERNATE:-true}"
+ROAM_FORCE_ANY_ALTERNATE="$(echo "$ROAM_FORCE_ANY_ALTERNATE" | tr '[:upper:]' '[:lower:]')"
 ROAM_SELECTION_MODE="${ROAM_SELECTION_MODE:-best}"   # best | random | target
 ROAM_TARGET_BSSID="${ROAM_TARGET_BSSID:-}"
 ROAM_INTERVAL_SECONDS="${ROAM_INTERVAL_SECONDS:-}"
