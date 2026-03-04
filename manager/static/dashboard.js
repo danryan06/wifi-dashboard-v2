@@ -124,6 +124,10 @@ function displayPersonas(personas) {
         const personaTypeLabel = persona.persona_type === 'roamer'
             ? 'Roaming Client'
             : `${persona.persona_type || 'Unknown'} Client`;
+        const health = persona.health || {};
+        const connectivity = health.connectivity || {};
+        const roaming = health.roaming || {};
+        const healthPhase = health.phase || 'unknown';
 
         return `
             <div class="persona-card ${personaClass}">
@@ -145,6 +149,24 @@ function displayPersonas(personas) {
                 <div style="margin-bottom: 12px;">
                     <div style="font-size: 0.9em; color: var(--muted); margin-bottom: 4px;">Hostname</div>
                     <div style="font-family: monospace; font-size: 0.85em;">${persona.hostname}</div>
+                </div>
+                ` : ''}
+                <div style="margin-bottom: 12px; padding: 10px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+                    <div style="font-size: 0.9em; color: var(--muted); margin-bottom: 4px;">Health</div>
+                    <div style="font-size: 0.85em; line-height: 1.5;">
+                        Phase: <strong>${healthPhase}</strong><br>
+                        Ping: <strong>${connectivity.ping || 'unknown'}</strong> |
+                        DNS: <strong>${connectivity.dns || 'unknown'}</strong> |
+                        HTTP: <strong>${connectivity.http || 'unknown'}</strong><br>
+                        Roam: <strong>${roaming.status || 'unknown'}</strong>${roaming.last_bssid ? ` | BSSID: <code>${roaming.last_bssid}</code>` : ''}
+                    </div>
+                </div>
+                ${health.last_event ? `
+                <div style="margin-bottom: 12px;">
+                    <div style="font-size: 0.9em; color: var(--muted); margin-bottom: 4px;">Last Event</div>
+                    <div style="font-family: monospace; font-size: 0.75em; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        ${health.last_event}
+                    </div>
                 </div>
                 ` : ''}
                 <div style="display: flex; gap: 8px; margin-top: 16px;">
@@ -451,22 +473,30 @@ function updateLogTabs() {
     
     // Add persona log tab if viewing persona
     if (currentLogContainerId) {
+        const managerActive = currentLogName === 'manager' ? 'active' : '';
+        const personaActive = currentLogName === 'persona' ? 'active' : '';
         tabsContainer.innerHTML = `
-            <button class="log-tab" data-log="manager" onclick="switchToManagerLog()">📄 Manager</button>
-            <button class="log-tab active" data-log="persona">👤 Persona</button>
+            <button class="log-tab ${managerActive}" data-log="manager" onclick="switchToManagerLog()">📄 Manager</button>
+            <button class="log-tab ${personaActive}" data-log="persona" onclick="switchToPersonaLog()">👤 Persona</button>
         `;
     } else {
         tabsContainer.innerHTML = `
-            <button class="log-tab active" data-log="manager">📄 Manager</button>
+            <button class="log-tab active" data-log="manager" onclick="switchToManagerLog()">📄 Manager</button>
         `;
     }
 }
 
 function switchToManagerLog() {
     currentLogName = 'manager';
-    currentLogContainerId = null;
     updateLogTabs();
     loadManagerLog();
+}
+
+function switchToPersonaLog() {
+    if (!currentLogContainerId) return;
+    currentLogName = 'persona';
+    updateLogTabs();
+    loadPersonaLog(currentLogContainerId);
 }
 
 function displayLogContent(logs) {

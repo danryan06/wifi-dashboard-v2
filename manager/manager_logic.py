@@ -120,6 +120,64 @@ class PersonaManager:
         except Exception as e:
             logger.error(f"Failed to save state: {e}")
 
+    def _extract_persona_health(self, logs: str) -> Dict:
+        """Best-effort extraction of persona runtime health from recent logs."""
+        summary = {
+            "phase": "unknown",
+            "last_event": "",
+            "connectivity": {"ping": "unknown", "dns": "unknown", "http": "unknown"},
+            "roaming": {"status": "unknown", "last_target": "", "last_bssid": ""},
+        }
+        if not logs:
+            return summary
+
+        lines = [l.strip() for l in logs.splitlines() if l.strip()]
+        if not lines:
+            return summary
+
+        for line in reversed(lines):
+            if not summary["last_event"] and ("GOOD-CLIENT:" in line or "TRAFFIC[" in line):
+                summary["last_event"] = line
+
+            if summary["phase"] == "unknown":
+                if "Connected successfully" in line or "Connection confirmed via wpa_cli" in line:
+                    summary["phase"] = "connected"
+                elif "Attempting roam to BSSID" in line or "Roam candidate selected" in line:
+                    summary["phase"] = "roaming"
+                elif "Connecting to SSID" in line or "Starting wpa_supplicant" in line:
+                    summary["phase"] = "connecting"
+                elif "Connection failed" in line or "ERROR:" in line:
+                    summary["phase"] = "error"
+
+            if summary["connectivity"]["ping"] == "unknown":
+                if "TRAFFIC[" in line and "ping" in line.lower():
+                    summary["connectivity"]["ping"] = "ok" if "✓" in line else "fail"
+            if summary["connectivity"]["dns"] == "unknown":
+                if "TRAFFIC[" in line and "DNS" in line:
+                    summary["connectivity"]["dns"] = "ok" if "✓" in line else "fail"
+            if summary["connectivity"]["http"] == "unknown":
+                if "TRAFFIC[" in line and "curl" in line.lower():
+                    if "curl ok" in line:
+                        summary["connectivity"]["http"] = "ok"
+                    elif "curl failed" in line:
+                        summary["connectivity"]["http"] = "fail"
+
+            if not summary["roaming"]["last_target"] and "Attempting roam to BSSID" in line:
+                summary["roaming"]["last_target"] = line.split("BSSID", 1)[-1].strip()
+                summary["roaming"]["status"] = "attempting"
+            if summary["roaming"]["status"] == "unknown" and "Roam successful" in line:
+                summary["roaming"]["status"] = "success"
+            if summary["roaming"]["status"] == "unknown" and "Roam timeout" in line:
+                summary["roaming"]["status"] = "timeout"
+            if not summary["roaming"]["last_bssid"] and "wpa_cli status:" in line and "bssid=" in line:
+                try:
+                    bssid_segment = line.split("bssid=", 1)[1]
+                    summary["roaming"]["last_bssid"] = bssid_segment.split()[0].strip()
+                except Exception:
+                    pass
+
+        return summary
+
     def _get_default_route_interface(self) -> Optional[str]:
         """Return the host interface used for default route (management path)."""
         try:
@@ -225,6 +283,7 @@ class PersonaManager:
             env_vars = {
                 'PERSONA_TYPE': persona_type,
                 'INTERFACE': 'eth_sim' if persona_type == 'wired' else 'wlan_sim',  # Standardized name inside container
+                'HOST_INTERFACE': interface,
                 'HOSTNAME': config['hostname'],
                 'TRAFFIC_INTENSITY': config.get('traffic_intensity', 'medium'),
                 'ROAMING_ENABLED': str(config.get('roaming_enabled', False)).lower(),
@@ -339,9 +398,11 @@ class PersonaManager:
 
             # Get interface from state
             interface = None
+            persona_type = None
             for iface, info in self.state.get('interfaces', {}).items():
                 if info.get('container_id') == container_id:
                     interface = iface
+                    persona_type = info.get('persona_type')
                     break
 
             if not interface:
@@ -356,6 +417,18 @@ class PersonaManager:
             except:
                 pid = None
 
+            # Attempt interface recovery while the container namespace still exists.
+            interface_recovered = True
+            if pid and pid > 0 and interface:
+                container_if = 'eth_sim' if persona_type == 'wired' else 'wlan_sim'
+                interface_recovered = self.interface_manager.return_to_host(
+                    interface=interface,
+                    container_pid=pid,
+                    container_interface=container_if
+                )
+                if not interface_recovered:
+                    logger.warning(f"Failed to return interface {interface} from container {container_name}")
+
             # Stop container
             try:
                 container.stop(timeout=10)
@@ -364,29 +437,6 @@ class PersonaManager:
                 logger.warning(f"Container {container_name} not found (may already be stopped)")
             except Exception as e:
                 logger.error(f"Error stopping container: {e}")
-
-            # Return interface to host if we have PID
-            if pid and pid > 0:
-                if interface:
-                    self.interface_manager.return_to_host(interface, pid)
-                else:
-                    # Try to recover any interface from the container
-                    logger.warning("Attempting to recover interface from stopped container")
-                    # This is a best-effort recovery
-                    try:
-                        result = subprocess.run(
-                            ["nsenter", "-t", str(pid), "-n", "ip", "link", "show"],
-                            capture_output=True,
-                            timeout=5,
-                            text=True
-                        )
-                        for line in result.stdout.split('\n'):
-                            if 'wlan' in line or 'wlp' in line:
-                                iface = line.split(':')[1].strip()
-                                self.interface_manager.return_to_host(iface, pid)
-                                break
-                    except:
-                        pass
 
             # Remove container
             try:
@@ -404,7 +454,9 @@ class PersonaManager:
             
             self._save_state()
 
-            return True, f"Persona stopped and interface returned to host"
+            if interface_recovered:
+                return True, "Persona stopped and interface returned to host"
+            return True, "Persona stopped, but interface return may need manual recovery"
 
         except docker.errors.NotFound:
             return False, f"Container not found"
@@ -522,6 +574,11 @@ class PersonaManager:
                         'created': attrs['Created'],
                         'image': attrs['Config']['Image'],
                     }
+                    try:
+                        recent_logs = container.logs(tail=200, timestamps=False).decode('utf-8', errors='ignore')
+                        persona_info['health'] = self._extract_persona_health(recent_logs)
+                    except Exception:
+                        persona_info['health'] = self._extract_persona_health("")
                     
                     # Get interface assignment from state
                     for iface, info in self.state.get('interfaces', {}).items():

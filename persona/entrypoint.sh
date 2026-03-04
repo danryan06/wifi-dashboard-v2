@@ -6,6 +6,7 @@ set -euo pipefail
 
 # Default interface name - will be wlan_sim for Wi-Fi, eth_sim for wired
 INTERFACE="${INTERFACE:-wlan_sim}"
+HOST_INTERFACE="${HOST_INTERFACE:-unknown}"
 PERSONA_TYPE="${PERSONA_TYPE:-good}"
 HOSTNAME="${HOSTNAME:-CNXNMist-Persona}"
 SSID="${SSID:-}"
@@ -21,7 +22,7 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] PERSONA[$PERSONA_TYPE]: $*" | tee -a "$LOG_DIR/persona-${PERSONA_TYPE}.log"
 }
 
-log "Starting persona container: type=$PERSONA_TYPE, interface=$INTERFACE"
+log "Starting persona container: type=$PERSONA_TYPE, host_interface=$HOST_INTERFACE, container_interface=$INTERFACE"
 
 # Wait for interface to be moved into container namespace
 log "Waiting for interface $INTERFACE to be available..."

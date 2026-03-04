@@ -211,20 +211,24 @@ class InterfaceManager:
             logger.exception(f"Unexpected error moving interface: {e}")
             return False, f"Unexpected error: {str(e)}"
 
-    def return_to_host(self, interface: str, container_pid: int) -> bool:
+    def return_to_host(self, interface: str, container_pid: int, container_interface: Optional[str] = None) -> bool:
         """
         Manual recovery of an interface if a container crashes.
         Moves interface back to host namespace (PID 1).
         """
         try:
-            logger.info(f"Returning {interface} to host namespace from PID {container_pid}")
+            container_if = container_interface or interface
+            logger.info(
+                f"Returning interface from container namespace: host={interface}, "
+                f"container={container_if}, pid={container_pid}"
+            )
             
             # Check if this is a wireless or ethernet interface
             is_wireless = False
             try:
                 # Try to get PHY name from inside container
                 result = subprocess.run(
-                    ["nsenter", "-t", str(container_pid), "-n", "iw", "dev", interface, "info"],
+                    ["nsenter", "-t", str(container_pid), "-n", "iw", "dev", container_if, "info"],
                     capture_output=True,
                     timeout=5,
                     text=True
@@ -239,7 +243,7 @@ class InterfaceManager:
                 try:
                     phy_name = None
                     result = subprocess.run(
-                        ["nsenter", "-t", str(container_pid), "-n", "iw", "dev", interface, "info"],
+                        ["nsenter", "-t", str(container_pid), "-n", "iw", "dev", container_if, "info"],
                         capture_output=True,
                         timeout=5,
                         text=True
@@ -260,9 +264,16 @@ class InterfaceManager:
                             timeout=10,
                             capture_output=True
                         )
-                        logger.info(f"Returned wireless interface {interface} (phy: {phy_name}) to host")
+                        logger.info(f"Returned wireless interface {container_if} (phy: {phy_name}) to host")
                         # Bring it up on host
                         time.sleep(0.5)
+                        if container_if != interface:
+                            subprocess.run(
+                                ["ip", "link", "set", container_if, "name", interface],
+                                check=False,
+                                timeout=5,
+                                capture_output=True
+                            )
                         subprocess.run(
                             ["ip", "link", "set", interface, "up"],
                             check=False,
@@ -276,7 +287,7 @@ class InterfaceManager:
             # For ethernet or as fallback, use ip link
             subprocess.run(
                 ["nsenter", "-t", str(container_pid), "-n", 
-                 "ip", "link", "set", interface, "netns", "1"],
+                 "ip", "link", "set", container_if, "netns", "1"],
                 check=True,
                 timeout=10,
                 capture_output=True
@@ -284,6 +295,13 @@ class InterfaceManager:
             
             # Bring it up on host
             time.sleep(0.5)
+            if container_if != interface:
+                subprocess.run(
+                    ["ip", "link", "set", container_if, "name", interface],
+                    check=False,
+                    timeout=5,
+                    capture_output=True
+                )
             subprocess.run(
                 ["ip", "link", "set", interface, "up"],
                 check=False,  # Don't fail if already up
@@ -291,14 +309,14 @@ class InterfaceManager:
                 capture_output=True
             )
             
-            logger.info(f"Successfully returned {interface} to host")
+            logger.info(f"Successfully returned interface to host as {interface}")
             return True
             
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to return interface to host: {e}")
             # Try alternative method using iw
             try:
-                phy_name = self.get_phy_name(interface)
+                phy_name = self.get_phy_name(container_if)
                 if phy_name:
                     subprocess.run(
                         ["nsenter", "-t", str(container_pid), "-n",
@@ -373,10 +391,11 @@ class InterfaceManager:
                         parts = line.split(':')
                         if len(parts) >= 2:
                             potential_iface = parts[1].strip().split('@')[0]  # Remove @link suffix
-                            
-                            # Check if it's a wireless interface (wlan, wlp, or check via iw)
+
+                            # Check if it's a wireless interface (wlan/wlp/wlx or via sysfs/iw probe)
                             is_wifi = False
-                            if 'wlan' in potential_iface or 'wlp' in potential_iface:
+                            wireless_sysfs = f"/sys/class/net/{potential_iface}/wireless"
+                            if potential_iface.startswith('wl') or os.path.exists(wireless_sysfs):
                                 is_wifi = True
                             else:
                                 # Check if it's a wireless interface using iw
@@ -414,7 +433,8 @@ class InterfaceManager:
                         
                         # Check if it's a wireless interface
                         is_wifi = False
-                        if 'wlan' in iface_name or 'wlp' in iface_name:
+                        wireless_sysfs = f"/sys/class/net/{iface_name}/wireless"
+                        if iface_name.startswith('wl') or os.path.exists(wireless_sysfs):
                             is_wifi = True
                         else:
                             # Check using iw
