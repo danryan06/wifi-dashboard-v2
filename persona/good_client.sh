@@ -230,8 +230,9 @@ update_config=1
 network={
     ssid="$SSID"
     psk="$PASSWORD"
-    # Allow FT-PSK where available while remaining compatible with WPA-PSK.
-    key_mgmt=WPA-PSK FT-PSK
+    # Keep key_mgmt broadly compatible across wpa_supplicant versions.
+    # Some builds reject FT-PSK token parsing in this field.
+    key_mgmt=WPA-PSK
     scan_ssid=1
 }
 EOF
