@@ -508,11 +508,6 @@ class InterfaceManager:
                     interfaces_to_remove.append(iface_name)
                     continue
                 
-                # Skip container interface names (wlan_sim is the standard name inside containers)
-                if iface_name == 'wlan_sim':
-                    interfaces_to_remove.append(iface_name)
-                    continue
-                
                 # Check if interface is in a container namespace (not on host)
                 # If we can't get info about it from the host, it's probably in a container
                 try:
@@ -551,6 +546,11 @@ class InterfaceManager:
                         phy_name = self.get_phy_name(iface_name)
                         if phy_name:
                             interfaces[iface_name]['phy'] = phy_name
+                        if iface_name == 'wlan_sim':
+                            interfaces[iface_name]['stale_name_warning'] = (
+                                "Adapter appears to be using container-style name on host "
+                                "(consider renaming back to wlanX)."
+                            )
                     
                     # Get interface state
                     state_result = subprocess.run(

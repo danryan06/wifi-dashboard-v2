@@ -165,10 +165,8 @@ def get_available_interfaces() -> List[str]:
                 parts = line.split()
                 if len(parts) >= 2:
                     iface = parts[1].strip()
-                    # Hide monitor-mode/virtual interfaces and persona-internal naming.
+                    # Hide monitor-mode/virtual interfaces.
                     if iface.startswith('mon'):
-                        continue
-                    if iface == 'wlan_sim':
                         continue
                     if iface not in seen:
                         seen.add(iface)
