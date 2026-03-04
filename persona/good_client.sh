@@ -62,6 +62,26 @@ is_connected() {
     iw dev "$INTERFACE" link 2>/dev/null | grep -qE "Connected|SSID"
 }
 
+has_ipv4_address() {
+    ip addr show "$INTERFACE" 2>/dev/null | grep -q "inet "
+}
+
+connection_health_ok() {
+    if is_connected; then
+        return 0
+    fi
+
+    # If control-plane status is flaky but we still have IP + data-plane reachability,
+    # treat the link as healthy and avoid churny reconnect loops.
+    if has_ipv4_address; then
+        if ping -I "$INTERFACE" -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 is_integer() {
     [ -n "${1:-}" ] && [ "$1" -eq "$1" ] 2>/dev/null
 }
@@ -509,12 +529,12 @@ while true; do
         # Monitor connection with tolerance for transient link sampling glitches.
         missed_checks=0
         while true; do
-            if is_connected; then
+            if connection_health_ok; then
                 missed_checks=0
             else
                 missed_checks=$((missed_checks + 1))
-                log "Connection check missed ($missed_checks/6)"
-                if [ "$missed_checks" -ge 6 ]; then
+                log "Connection check missed ($missed_checks/12)"
+                if [ "$missed_checks" -ge 12 ]; then
                     break
                 fi
             fi
