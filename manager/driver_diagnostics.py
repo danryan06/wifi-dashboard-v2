@@ -151,6 +151,7 @@ def check_driver_for_device(device_id: str) -> Optional[Dict]:
 def get_available_interfaces() -> List[str]:
     """Get list of available Wi-Fi interfaces"""
     interfaces = []
+    seen = set()
     try:
         result = subprocess.run(
             ['iw', 'dev'],
@@ -163,11 +164,19 @@ def get_available_interfaces() -> List[str]:
             if 'Interface' in line:
                 parts = line.split()
                 if len(parts) >= 2:
-                    interfaces.append(parts[1])
+                    iface = parts[1].strip()
+                    # Hide monitor-mode/virtual interfaces and persona-internal naming.
+                    if iface.startswith('mon'):
+                        continue
+                    if iface == 'wlan_sim':
+                        continue
+                    if iface not in seen:
+                        seen.add(iface)
+                        interfaces.append(iface)
     except Exception as e:
         logger.debug(f"Error getting interfaces: {e}")
     
-    return interfaces
+    return sorted(interfaces)
 
 
 def check_driver_module_exists(driver_name: str) -> bool:
